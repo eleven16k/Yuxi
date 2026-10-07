@@ -9,6 +9,7 @@ from yuxi.agents.toolkits.spe.client import (
     SpeToolError,
     call_spe_biz_get,
     call_spe_biz_mutate,
+    call_spe_credit_balance,
     call_spe_login,
     call_spe_tool,
     create_spe_session,
@@ -340,3 +341,37 @@ async def test_mutate_401_403_404_same_as_get(httpx_mock) -> None:
         with pytest.raises(SpeToolError) as info:
             await call_spe_biz_mutate(base_url=BASE, jwt="j", method="POST", path="/api/v1/pricing/dynamic/7/apply")
         assert info.value.code == code
+
+
+# ---------- call_spe_credit_balance（积分入口闸） ----------
+
+CREDIT_URL = f"{BASE}/api/v1/credit/balance"
+
+
+async def test_credit_balance_success(httpx_mock) -> None:
+    httpx_mock.add_response(url=CREDIT_URL, json={"creditBalance": 1200, "creditFrozen": 50})
+    balance = await call_spe_credit_balance(base_url=BASE, user_jwt="jwt-spe")
+    assert balance == {"creditBalance": 1200, "creditFrozen": 50}
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["Authorization"] == "Bearer jwt-spe"
+
+
+async def test_credit_balance_missing_fields_fail_closed(httpx_mock) -> None:
+    """响应缺字段按 0 容错——入口闸侧 fail-closed。"""
+    httpx_mock.add_response(url=CREDIT_URL, json={})
+    balance = await call_spe_credit_balance(base_url=BASE, user_jwt="jwt-spe")
+    assert balance == {"creditBalance": 0, "creditFrozen": 0}
+
+
+async def test_credit_balance_401_maps_auth_failed(httpx_mock) -> None:
+    httpx_mock.add_response(url=CREDIT_URL, status_code=401, json={})
+    with pytest.raises(SpeToolError) as info:
+        await call_spe_credit_balance(base_url=BASE, user_jwt="jwt-spe")
+    assert info.value.code == "AUTH_FAILED"
+
+
+async def test_credit_balance_500_maps_upstream_error(httpx_mock) -> None:
+    httpx_mock.add_response(url=CREDIT_URL, status_code=500, json={})
+    with pytest.raises(SpeToolError) as info:
+        await call_spe_credit_balance(base_url=BASE, user_jwt="jwt-spe")
+    assert info.value.code == "TOOL_UPSTREAM_ERROR"

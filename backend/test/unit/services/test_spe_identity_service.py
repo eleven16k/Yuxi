@@ -75,6 +75,7 @@ def wiring(monkeypatch):
     cred = _FakeCredRepo()
     monkeypatch.setattr(svc, "spe_agent_opts", _FakeOpts())
     monkeypatch.setattr(svc, "spe_credential_repository", cred)
+    monkeypatch.setattr(svc, "call_spe_credit_balance", _credit_ok())
     return SimpleNamespace(cred=cred, monkeypatch=monkeypatch)
 
 
@@ -83,6 +84,13 @@ def _spe_ok(**profile):
         return {"token": "jwt-spe", "role": "ADMIN", "username": "alice", "tenantId": 5, **profile}
 
     return fake_login
+
+
+def _credit_ok(balance: int = 1000):
+    async def fake_balance(**kwargs):
+        return {"creditBalance": balance, "creditFrozen": 0}
+
+    return fake_balance
 
 
 async def test_first_login_provisions_user_and_binds_jwt(wiring) -> None:
@@ -130,3 +138,30 @@ async def test_spe_wrong_password_maps_401(wiring) -> None:
         await svc.login_with_spe(username="a", password="bad", db=_FakeScalarSession([]))
     assert info.value.status_code == 401
     assert wiring.cred.bound == []
+
+
+async def test_zero_balance_blocks_login_without_provisioning(wiring) -> None:
+    """入口闸（spec §8）：零余额 403 拒绝，且不开户、不绑定凭证。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
+    wiring.monkeypatch.setattr(svc, "call_spe_credit_balance", _credit_ok(balance=0))
+    db = _FakeScalarSession([])
+    with pytest.raises(HTTPException) as info:
+        await svc.login_with_spe(username="alice", password="pw", db=db)
+    assert info.value.status_code == 403
+    assert "积分余额不足" in info.value.detail
+    assert db.added == []  # 闸门先于开户
+    assert wiring.cred.bound == []  # 闸门先于凭证绑定
+
+
+async def test_credit_query_upstream_error_maps_502(wiring) -> None:
+    """积分查询上游故障 → 502（fail-closed，不静默放行）。"""
+    from yuxi.agents.toolkits.spe.client import SpeToolError
+
+    async def broken(**kwargs):
+        raise SpeToolError("TOOL_UPSTREAM_ERROR", "积分查询连接失败")
+
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
+    wiring.monkeypatch.setattr(svc, "call_spe_credit_balance", broken)
+    with pytest.raises(HTTPException) as info:
+        await svc.login_with_spe(username="alice", password="pw", db=_FakeScalarSession([]))
+    assert info.value.status_code == 502

@@ -17,7 +17,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.toolkits.spe.client import SpeToolError, call_spe_login
+from yuxi.agents.toolkits.spe.client import SpeToolError, call_spe_credit_balance, call_spe_login
 from yuxi.config.options import spe_agent_opts
 from yuxi.repositories import spe_credential_repository
 from yuxi.storage.postgres.models_business import Department, User
@@ -84,6 +84,19 @@ async def login_with_spe(
         if e.code in {"AUTH_FAILED", "BIZ_AUTH_FAILED"}:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SPE 用户名或密码错误") from e
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SPE 登录失败：{e.message}") from e
+
+    # 入口闸（spec §8）：零余额租户不进入工作台、也不为其开户；顺序先于用户查建
+    try:
+        balance = await call_spe_credit_balance(base_url=base_url, user_jwt=str(spe_profile["token"]))
+    except SpeToolError as e:
+        if e.code in {"AUTH_FAILED", "BIZ_AUTH_FAILED"}:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SPE 登录态失效，请重试") from e
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"积分查询失败：{e.message}") from e
+    if balance["creditBalance"] <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="积分余额不足：请先在 SPE 平台充值后再使用智能工作台",
+        )
 
     spe_username = spe_profile.get("username") or username.strip()
     uid = spe_uid(spe_username)

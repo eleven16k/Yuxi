@@ -298,3 +298,40 @@ async def call_spe_login(
     if not isinstance(token, str) or not token:
         raise SpeToolError(SPE_TOOL_UPSTREAM_CODE, "登录响应缺少 token 字段，无法存储登录态")
     return body
+
+
+async def call_spe_credit_balance(
+    *,
+    base_url: str,
+    user_jwt: str,
+    timeout: float = SPE_SESSION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """积分余额查询（联邦登录入口闸用）：GET /api/v1/credit/balance，Bearer 用户 JWT。
+
+    返回 {"creditBalance": int, "creditFrozen": int}，缺字段按 0 容错（入口闸
+    fail-closed）；401 归一 AUTH_FAILED，其余失败归一 TOOL_UPSTREAM_ERROR。
+    """
+    url = f"{_base(base_url)}/api/v1/credit/balance"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            res = await client.get(url, headers={"Authorization": f"Bearer {user_jwt}"})
+        except httpx.TimeoutException as e:
+            raise SpeToolError(SPE_TOOL_UPSTREAM_CODE, f"积分查询超时（{timeout}s）：{e}") from e
+        except httpx.HTTPError as e:
+            raise SpeToolError(SPE_TOOL_UPSTREAM_CODE, f"积分查询连接失败：{e}") from e
+
+    try:
+        body: Any = res.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        body = {}
+
+    if res.status_code == 401:
+        raise SpeToolError("AUTH_FAILED", "SPE 登录态失效")
+    if res.is_error:
+        raise SpeToolError(SPE_TOOL_UPSTREAM_CODE, f"积分查询失败（HTTP {res.status_code}）")
+    return {
+        "creditBalance": int(body.get("creditBalance") or 0),
+        "creditFrozen": int(body.get("creditFrozen") or 0),
+    }
