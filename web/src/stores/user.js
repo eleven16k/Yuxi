@@ -38,7 +38,7 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(credentials) {
     try {
-      const data = await authApi.login(credentials)
+      const data = credentials.spe ? await authApi.speLogin(credentials) : await authApi.login(credentials)
       applySession(data)
       return true
     } catch (error) {

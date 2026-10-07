@@ -1,0 +1,1011 @@
+{
+  "source_repo": "/Users/mac/ai-plan/spe-agent",
+  "source_commit": "9225d3ecdcacea3545276a036fe8463e45e9938d",
+  "extracted_at": "2026-10-07",
+  "snapshot_nature": "冻结快照：spe-agent MCP 桥工具面契约的移植 oracle，仅供对账测试使用；以源码事实为准，与契约文档声称的差异显式记录在 counts.contract_doc_comparison",
+  "source_files": {
+    "mcp_bridge": [
+      "plugins/mcp-bridge/src/catalog.ts",
+      "plugins/mcp-bridge/src/biz-catalog.ts",
+      "plugins/mcp-bridge/src/biz-write-catalog.ts",
+      "plugins/mcp-bridge/src/admin-catalog.ts",
+      "plugins/mcp-bridge/src/auth-catalog.ts",
+      "plugins/mcp-bridge/src/errors.ts",
+      "plugins/mcp-bridge/src/index.ts",
+      "plugins/mcp-bridge/src/backend.ts",
+      "plugins/mcp-bridge/src/sessions.ts",
+      "plugins/mcp-bridge/src/permissions.ts",
+      "plugins/mcp-bridge/src/write-receipts.ts"
+    ],
+    "gate": "plugins/spe-gate/src/gate.ts",
+    "cards": "plugins/cards-ui/src/client/keys.ts"
+  },
+  "counts": {
+    "tool_face": 47,
+    "write_tool_catalog": 12,
+    "write_gate_face": 14,
+    "write_tool_face": 14,
+    "card_tools": 46,
+    "tool_modules": 7,
+    "system_tools": 10,
+    "known_error_codes": 22,
+    "exec_tracked_call_sites": 13,
+    "assembly_breakdown": {
+      "spe_ping_local": 1,
+      "tool_catalog_read": 6,
+      "navigate_to_local": 1,
+      "render_ui_local": 1,
+      "biz_tool_catalog_read": 19,
+      "write_tool_catalog": 12,
+      "admin_tool_catalog": 5,
+      "auth_tool_catalog": 2,
+      "total": 47
+    },
+    "contract_doc_comparison": {
+      "doc": "docs/contracts/2026-10-07-s2t-yuxi-integration.md",
+      "doc_claims": {
+        "tool_face": 47,
+        "write_tool_face": 14,
+        "card_tools": 46,
+        "tool_modules": 7
+      },
+      "source_counts": {
+        "tool_face": 47,
+        "write_tool_face": 14,
+        "card_tools": 46,
+        "tool_modules": 7
+      },
+      "verdict": "四项声称计数与源码事实全部一致，无差异",
+      "notes": [
+        "CARD_TOOLS=46 = 工具面 47 减去 spe_ping（spe_ping 无卡片信封，cards-ui 不注册）",
+        "WRITE_TOOL_FACE=14 = 写目录闸门写 10（apply_dynamic_price/restock_inventory/gift_credits/generate_listing/build_rich_content/generate_variant_titles/host_source_images/generate_ozon_images/kb_upload/yuxi_research）+ 管理工具 4（apply_permission_preset/grant_permission/revoke_permission/list_permissions）；写目录中 preview_dynamic_price 与 collect_products 是预览类，不进闸门不幂等；login 不进闸门（用户主动提供凭证即确认）",
+        "list_permissions 语义为查询但被列入 WRITE_TOOL_FACE（闸门层统一转 ask），这是 gate.ts 源码事实；mode 字段按语义标 read，write_gate 字段按闸门面标 true",
+        "TOOL_MODULES 覆盖 28 个非系统工具；其余 9 个（TOOL_CATALOG 6 个 agent 会话工具 + list_stores + login + logout）与 10 个 SYSTEM_TOOLS 不进模块矩阵",
+        "源码内部措辞观察：render_ui 工具 description 称组件目录 19 个（UI_TYPES 实际 19 项，正确），但其 inputSchema.spec 参数 description 写「白名单 11 组件」（陈旧注释，与 19 不符）；不影响参数面",
+        "kb-upload.e2e.test.ts 注释中「不污染场景八的 46 计数」为旧口径注释，实际断言已更新为 47"
+      ]
+    }
+  },
+  "mode_convention": "mode=write 当且仅当工具执行后端/桥侧状态修改并走 execTracked（写目录闸门写 10 + 管理写 3，恰等于 index.ts execTracked 调用点 13 处）；login/logout 为身份会话工具、preview_dynamic_price/collect_products 为预览类，均标 read",
+  "modules": [
+    {
+      "id": "orders",
+      "label": "订单与运营",
+      "tools": ["list_orders", "dashboard_stats", "monthly_report", "sales_summary", "sales_products", "ops_plans"]
+    },
+    {
+      "id": "selection",
+      "label": "选品与采集",
+      "tools": ["collect_products", "source_products", "hot_products", "collection_status", "get_source_draft"]
+    },
+    {
+      "id": "listing",
+      "label": "1688 上架",
+      "tools": ["generate_listing", "build_rich_content", "generate_variant_titles", "host_source_images", "generate_ozon_images"]
+    },
+    {
+      "id": "goods",
+      "label": "商品与库存",
+      "tools": ["list_products", "inventory_health", "low_stock", "replenishment"]
+    },
+    {
+      "id": "credit",
+      "label": "定价与积分",
+      "tools": ["preview_dynamic_price", "apply_dynamic_price", "restock_inventory", "gift_credits", "credit_transactions"]
+    },
+    {
+      "id": "console",
+      "label": "生成式卡片",
+      "tools": ["render_ui"]
+    },
+    {
+      "id": "knowledge",
+      "label": "知识中心",
+      "tools": ["kb_upload", "yuxi_research"]
+    }
+  ],
+  "tools": [
+    {
+      "name": "spe_ping",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "local",
+      "card_type": "none",
+      "description": "连通性自检：返回 ok（无信封，纯 JSON {ok:true}）",
+      "params": []
+    },
+    {
+      "name": "search_products",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "product-table",
+      "description": "检索 Ozon 平台热销榜商品（最多 50 条），按关键词/类目/品牌/价格区间过滤",
+      "params": [
+        {"name": "keyword", "type": "string", "required": false, "constraint": "≤120 字符，模糊匹配名称/SKU/卖家"},
+        {"name": "category", "type": "string", "required": false, "constraint": "≤60 字符，一级类目名"},
+        {"name": "brand", "type": "string", "required": false, "constraint": "≤60 字符"},
+        {"name": "minPrice", "type": "number", "required": false, "constraint": "均价下限（₽）"},
+        {"name": "maxPrice", "type": "number", "required": false, "constraint": "均价上限（₽）"},
+        {"name": "period", "type": "string", "required": false, "constraint": "enum weekly|monthly，缺省 weekly"},
+        {"name": "limit", "type": "integer", "required": false, "constraint": "1–50，缺省 20，越界夹紧不报错"},
+        {"name": "sort", "type": "object", "required": false, "constraint": "{field: enum sales30|priceRuble|title|skuId, dir: enum asc|desc}，additionalProperties:false，缺省 sales30 降序，未知字段退默认不报错"}
+      ]
+    },
+    {
+      "name": "keyword_hot_words",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "trend-chart",
+      "description": "查询 Ozon 卖家后台实时搜索热词榜；按次计费、每租户每分钟预算闸门，被预算拒绝时不要重试",
+      "params": [
+        {"name": "text", "type": "string", "required": false, "constraint": "词根，≤100 字符，可空=大盘热词"},
+        {"name": "limit", "type": "integer", "required": false, "constraint": "1–50，缺省 20"},
+        {"name": "period", "type": "string", "required": false, "constraint": "enum days_7|days_30，缺省 days_7"}
+      ]
+    },
+    {
+      "name": "competitor_analysis",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "product-table",
+      "description": "对一组 Ozon SKU 做竞品体检（价格/销量/评分均值）；24h 未命中缓存走上游采集按次计费",
+      "params": [
+        {"name": "skus", "type": "array", "required": true, "constraint": "string 数组，必填最多 20 个"},
+        {"name": "sort", "type": "object", "required": false, "constraint": "同 search_products.sort"}
+      ]
+    },
+    {
+      "name": "store_metrics",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "trend-chart",
+      "description": "本店铺近 N 天订单量与销售额日趋势（日期轴逐日补齐）",
+      "params": [
+        {"name": "days", "type": "integer", "required": false, "constraint": "1–90，缺省 30"}
+      ]
+    },
+    {
+      "name": "score_candidates",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "product-table",
+      "description": "对候选 SKU 取 Jev 出品打分；双闸（jev.enabled/jev.exposure-enabled）关时带内 JEV_DISABLED；带内错误不重试；分数不参与排序",
+      "params": [
+        {"name": "skus", "type": "array", "required": true, "constraint": "必填非空最多 20 个，逐个 ≤64 字符；特征由后端按会话反查"}
+      ]
+    },
+    {
+      "name": "generate_report",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "agent-session",
+      "card_type": "score-report",
+      "description": "把本轮已取数据汇编成选品报告（标题+小节）；统计值只认后端从已下发数据块现算；只读不计费；sections 缺失被参数校验挡下、空数组 INVALID_ARGS(400)",
+      "params": [
+        {"name": "title", "type": "string", "required": false, "constraint": "≤200 字符，缺省后端给定"},
+        {"name": "sections", "type": "array", "required": true, "constraint": "必填非空最多 20 节；每节 heading 必填 ≤200（缺标题整节丢弃）、bodyMarkdown ≤4000 超限裁剪、lists ≤30 条×≤120 字符、blockId=回执摘要行 blockId=blk_… 后那一串；additionalProperties:true（多写键后端丢弃）"}
+      ]
+    },
+    {
+      "name": "navigate_to",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "local",
+      "card_type": "navigate",
+      "description": "导航到 SPE 指定页面（D 档白名单 30 页，routeId 如 platform-tenants），本地分支不触后端",
+      "params": [
+        {"name": "routeId", "type": "string", "required": true, "constraint": "≤64 字符，须在 D_ROUTE_WHITELIST 白名单内"}
+      ]
+    },
+    {
+      "name": "render_ui",
+      "mode": "read",
+      "module": "console",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "local",
+      "card_type": "json-render",
+      "description": "本地渲染自定义生成式 UI 卡（json-render × shadcn/ui）；白名单 19 组件；spec 元素 ≤100",
+      "params": [
+        {"name": "spec", "type": "object", "required": true, "constraint": "{root:非空字符串须在 elements 内, elements:{ID:{type:19 组件白名单, props, children:字符串数组}}}；elements ≤100 项；additionalProperties:false"}
+      ]
+    },
+    {
+      "name": "list_orders",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查询本租户订单列表，支持状态/关键词/店铺/日期区间过滤与分页；status 传英文枚举",
+      "params": [
+        {"name": "status", "type": "string", "required": false, "constraint": "英文枚举如 delivered/delivering/awaiting_packaging/awaiting_deliver/cancelled"},
+        {"name": "keyword", "type": "string", "required": false, "constraint": "≤100 字符，越界截断不报错"},
+        {"name": "store", "type": "string", "required": false, "constraint": "店铺名或店铺 ID（list_stores 可查），不传=全部店铺"},
+        {"name": "startDate", "type": "string", "required": false, "constraint": "YYYY-MM-DD"},
+        {"name": "endDate", "type": "string", "required": false, "constraint": "YYYY-MM-DD"},
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0，负数与非整数按缺省"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20，越界夹紧不报错"}
+      ]
+    },
+    {
+      "name": "inventory_health",
+      "mode": "read",
+      "module": "goods",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "data-table",
+      "description": "获取本租户全部商品库存健康报告，按商品逐行",
+      "params": []
+    },
+    {
+      "name": "hot_products",
+      "mode": "read",
+      "module": "selection",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "product-table",
+      "description": "查询选品广场热销榜（按周期同步自 Ozon 官方）；恒按榜单名次升序；需 ADMIN 角色",
+      "params": [
+        {"name": "keyword", "type": "string", "required": false, "constraint": "关键词过滤"},
+        {"name": "category1", "type": "string", "required": false, "constraint": "一级类目过滤"},
+        {"name": "brand", "type": "string", "required": false, "constraint": "品牌过滤"},
+        {"name": "minPrice", "type": "number", "required": false, "constraint": "价格下限"},
+        {"name": "maxPrice", "type": "number", "required": false, "constraint": "价格上限"},
+        {"name": "period", "type": "string", "required": false, "constraint": "enum weekly|monthly，缺省 weekly"},
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"}
+      ]
+    },
+    {
+      "name": "monthly_report",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "score-report",
+      "description": "获取指定年月店铺经营月报；店铺缺省取首个启用店铺",
+      "params": [
+        {"name": "year", "type": "integer", "required": true, "constraint": "年份如 2026"},
+        {"name": "month", "type": "integer", "required": true, "constraint": "1–12"},
+        {"name": "store", "type": "string", "required": false, "constraint": "店铺名或 ID，不传=首个启用店铺"}
+      ]
+    },
+    {
+      "name": "source_products",
+      "mode": "read",
+      "module": "selection",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "data-table",
+      "description": "浏览采集箱源货列表，按更新时间倒序分页",
+      "params": [
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"}
+      ]
+    },
+    {
+      "name": "list_stores",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查看本租户 Ozon 店铺列表；供其他工具 store 参数取店铺名或 ID",
+      "params": []
+    },
+    {
+      "name": "credit_transactions",
+      "mode": "read",
+      "module": "credit",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查询全平台积分流水明细（9 列），支持类型过滤与时间范围，按创建时间倒序；需 SUPER_ADMIN 角色",
+      "params": [
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"},
+        {"name": "type", "type": "string", "required": false, "constraint": "如 consume/recharge/admin_adjust"},
+        {"name": "dateRange", "type": "string", "required": false, "constraint": "enum 7d|30d|all，缺省 all"}
+      ]
+    },
+    {
+      "name": "dashboard_stats",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "score-report",
+      "description": "获取数据看板统计（经营指标/商品健康）；可选 store 筛选",
+      "params": [
+        {"name": "store", "type": "string", "required": false, "constraint": "店铺名或 ID，不传=全部店铺"}
+      ]
+    },
+    {
+      "name": "list_products",
+      "mode": "read",
+      "module": "goods",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查询本租户商品列表；tenantId 由桥按登录态解析注入，不进工具参数",
+      "params": []
+    },
+    {
+      "name": "sales_summary",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "score-report",
+      "description": "获取销售分析总览，支持日期区间过滤，缺省取最新采集周期",
+      "params": [
+        {"name": "dateFrom", "type": "string", "required": false, "constraint": "YYYY-MM-DD"},
+        {"name": "dateTo", "type": "string", "required": false, "constraint": "YYYY-MM-DD"}
+      ]
+    },
+    {
+      "name": "sales_products",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "按商品的销售分析，支持日期区间与分页，按订单件数降序",
+      "params": [
+        {"name": "dateFrom", "type": "string", "required": false, "constraint": "YYYY-MM-DD"},
+        {"name": "dateTo", "type": "string", "required": false, "constraint": "YYYY-MM-DD"},
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"}
+      ]
+    },
+    {
+      "name": "low_stock",
+      "mode": "read",
+      "module": "goods",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "获取本租户低库存项列表；tenantId 桥内解析注入",
+      "params": []
+    },
+    {
+      "name": "replenishment",
+      "mode": "read",
+      "module": "goods",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "获取本租户补货建议列表",
+      "params": []
+    },
+    {
+      "name": "ops_plans",
+      "mode": "read",
+      "module": "orders",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查询运营计划列表，支持状态过滤（缺省 ACTIVE）与分页",
+      "params": [
+        {"name": "status", "type": "string", "required": false, "constraint": "enum PREPARING|ACTIVE|ARCHIVED|FAILED，缺省 ACTIVE，枚举外值按缺省"},
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"}
+      ]
+    },
+    {
+      "name": "get_source_draft",
+      "mode": "read",
+      "module": "selection",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "查看采集箱源货的 Ozon 上架草稿状态（含生图状态）；generate_ozon_images 启动后用本工具轮询进度",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "采集箱源货 ID，整数 ≥1"}
+      ]
+    },
+    {
+      "name": "collection_status",
+      "mode": "read",
+      "module": "selection",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "score-report",
+      "description": "查看采集管道状态（采集统计/管道活性/最近 5 条）；插件与工作台写同一后端管道，为桥接判据卡",
+      "params": []
+    },
+    {
+      "name": "kb_list",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "浏览知识中心文章列表；双 scope（official 全租户共享/tenant 本租户私有），scope 缺省 all 合并",
+      "params": [
+        {"name": "scope", "type": "string", "required": false, "constraint": "enum all|official|tenant，缺省 all"},
+        {"name": "category", "type": "string", "required": false, "constraint": "分类过滤如 选品方法/运营SOP/平台帮助"},
+        {"name": "q", "type": "string", "required": false, "constraint": "标题关键词过滤"},
+        {"name": "page", "type": "integer", "required": false, "constraint": "≥0，缺省 0"},
+        {"name": "size", "type": "integer", "required": false, "constraint": "1–100，缺省 20"}
+      ]
+    },
+    {
+      "name": "kb_read",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "article",
+      "description": "阅读知识中心单篇文章正文；记录ID 从 kb_list 面板获取；跨租户文章服务端 404",
+      "params": [
+        {"name": "id", "type": "string", "required": true, "constraint": "必填 ≤128 字符，须为「{kb_id}/{file_id}」复合记录ID"}
+      ]
+    },
+    {
+      "name": "yuxi_kb_search",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-get",
+      "card_type": "panel",
+      "description": "语义检索知识中心（RAG 向量+关键词混合）；官方与租户 KB 并发合并按分数排序；需 Yuxi 后端，未配置报 YUXI_NOT_CONFIGURED",
+      "params": [
+        {"name": "query", "type": "string", "required": true, "constraint": "≤200 字符，越界截断不报错"},
+        {"name": "scope", "type": "string", "required": false, "constraint": "enum all|official|tenant，缺省 all"},
+        {"name": "file_name", "type": "string", "required": false, "constraint": "片段按来源文件名过滤"},
+        {"name": "top_k", "type": "integer", "required": false, "constraint": "1–20，缺省 10，越界夹紧"}
+      ]
+    },
+    {
+      "name": "preview_dynamic_price",
+      "mode": "read",
+      "module": "credit",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-post",
+      "card_type": "data-table",
+      "description": "预览指定商品动态定价推荐，纯预览不改价不落库；不进写审批闸门、不做幂等去重（预览类）",
+      "params": [
+        {"name": "productId", "type": "string", "required": true, "constraint": "maxLength 64"}
+      ]
+    },
+    {
+      "name": "apply_dynamic_price",
+      "mode": "write",
+      "module": "credit",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "应用指定价格记录的动态定价推荐，应用后新价格即生效；写回执「已应用动态推荐价（价格记录 #<id>）」",
+      "params": [
+        {"name": "priceId", "type": "integer", "required": true, "constraint": "价格记录 ID"}
+      ]
+    },
+    {
+      "name": "restock_inventory",
+      "mode": "write",
+      "module": "credit",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "为指定库存项补货；写回执「已补货库存项 #<id>：+<数量> 件 @ <单价>」",
+      "params": [
+        {"name": "inventoryId", "type": "integer", "required": true, "constraint": "库存项 ID"},
+        {"name": "quantity", "type": "integer", "required": true, "constraint": "正整数"},
+        {"name": "unitCost", "type": "number", "required": true, "constraint": "单位成本（数字）"}
+      ]
+    },
+    {
+      "name": "gift_credits",
+      "mode": "write",
+      "module": "credit",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "向指定租户赠送积分调账；需 SuperAdmin 角色；写回执「已向租户 <t> 赠送 <a> 积分，余额 <b>」",
+      "params": [
+        {"name": "tenantId", "type": "integer", "required": true, "constraint": "租户 ID，整数 ≥1"},
+        {"name": "amount", "type": "integer", "required": true, "constraint": "赠送积分数量，整数 ≥1"},
+        {"name": "remark", "type": "string", "required": false, "constraint": "≤200 字符，超长拒绝；opKey/body 中 remark 缺省不带键"}
+      ]
+    },
+    {
+      "name": "collect_products",
+      "mode": "read",
+      "module": "selection",
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "biz-post",
+      "card_type": "panel",
+      "description": "按 SKU 采集 Ozon 商品选品数据（第三方源本地缓存 1 天，记入采集历史）；预览类：不进写审批闸门、不做幂等去重",
+      "params": [
+        {"name": "skus", "type": "array", "required": true, "constraint": "1–50 个非空字符串（maxItems 50）"}
+      ]
+    },
+    {
+      "name": "build_rich_content",
+      "mode": "write",
+      "module": "listing",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "为源货草稿生成/重新生成 Ozon Rich Content 富内容（图文 JSON 写回草稿；按次扣积分）",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "采集箱源货 ID，整数 ≥1"}
+      ]
+    },
+    {
+      "name": "generate_variant_titles",
+      "mode": "write",
+      "module": "listing",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "AI 为源货每个 SKU 规格生成俄语变体标题并写回（按次扣积分，AI 失败自动回退拼接）",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "采集箱源货 ID，整数 ≥1"}
+      ]
+    },
+    {
+      "name": "host_source_images",
+      "mode": "write",
+      "module": "listing",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "把源货 1688 图片托管到 SPE 公网图床（Ozon 上架拉图前置步骤）",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "采集箱源货 ID，整数 ≥1"}
+      ]
+    },
+    {
+      "name": "generate_ozon_images",
+      "mode": "write",
+      "module": "listing",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "AI 生成 Ozon 套图（异步启动，ZenMux 引擎，49 积分/张×参考图系数）；启动后用 get_source_draft 轮询",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "采集箱源货 ID，整数 ≥1"},
+        {"name": "count", "type": "integer", "required": false, "constraint": "生成张数，缺省按后端模板；opKey 中记 count ?? null"}
+      ]
+    },
+    {
+      "name": "generate_listing",
+      "mode": "write",
+      "module": "listing",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "biz-post",
+      "card_type": "confirm-result",
+      "description": "为采集箱源货一键生成 Ozon 上架草稿（AI 同步 1–3 分钟，timeoutMs 300s 覆写缺省 120s；按次扣积分，402→BIZ_INSUFFICIENT_CREDIT）",
+      "params": [
+        {"name": "sourceProductId", "type": "integer", "required": true, "constraint": "源货 ID（source_products 列表 id），整数 ≥1"},
+        {"name": "store", "type": "string", "required": false, "constraint": "店铺名或 ID，不传=首个启用店铺；opKey 按参数面去重（store 名与缺省首店 opKey 不同）"}
+      ]
+    },
+    {
+      "name": "kb_upload",
+      "mode": "write",
+      "module": "knowledge",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "yuxi",
+      "card_type": "confirm-result",
+      "description": "上传 markdown 文档到知识中心，自动走 Yuxi 五连链 上传→登记→解析→索引（索引异步排队）；无条件注册+运行时守卫，缺省 spe 模式响亮报 YUXI_NOT_CONFIGURED 不回落",
+      "params": [
+        {"name": "scope", "type": "string", "required": true, "constraint": "enum official|tenant；official 全体租户可见（慎用），tenant 按登录态自动路由"},
+        {"name": "filename", "type": "string", "required": true, "constraint": ".md/.txt 结尾、不含路径分隔符 / \\、≤200 字符（maxLength 200）"},
+        {"name": "content", "type": "string", "required": true, "constraint": "markdown 文本 ≤1MB（1,000,000 字符）超限拒绝（maxLength 1000000）"}
+      ]
+    },
+    {
+      "name": "yuxi_research",
+      "mode": "write",
+      "module": "knowledge",
+      "system_tool": false,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "yuxi",
+      "card_type": "confirm-result",
+      "description": "调用 Yuxi deep-research 深度研究智能体（多步检索产出研究回答；写级算力消耗）；agent-call 两端点 runs/result，轮询上限 240s，超时返回 run_id 可续取；无条件注册+运行时守卫",
+      "params": [
+        {"name": "question", "type": "string", "required": true, "constraint": "≤2000 字符（maxLength 2000），越界截断不报错；非空校验含纯空白"}
+      ]
+    },
+    {
+      "name": "grant_permission",
+      "mode": "write",
+      "module": null,
+      "system_tool": true,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "admin",
+      "card_type": "confirm-result",
+      "description": "授予/调整租户工具权限（需超管，handler 取 /auth/me role 校验）；execTracked 审计+120s 幂等；桥内 PermissionStore 变更+落盘",
+      "params": [
+        {"name": "tenantId", "type": "integer", "required": true, "constraint": "租户 ID，整数 ≥1"},
+        {"name": "tools", "type": "array", "required": true, "constraint": "工具逻辑名列表或 \"*\"（按方向整体翻转条目）"},
+        {"name": "mode", "type": "string", "required": false, "constraint": "enum allow|deny，缺省 allow"}
+      ]
+    },
+    {
+      "name": "revoke_permission",
+      "mode": "write",
+      "module": null,
+      "system_tool": true,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "admin",
+      "card_type": "confirm-result",
+      "description": "收回租户工具权限（需超管）＝grant(tenantId, tools, 'deny')；execTracked 审计+幂等",
+      "params": [
+        {"name": "tenantId", "type": "integer", "required": true, "constraint": "租户 ID，整数 ≥1"},
+        {"name": "tools", "type": "array", "required": true, "constraint": "工具逻辑名列表或 \"*\""}
+      ]
+    },
+    {
+      "name": "permission_console",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "admin",
+      "card_type": "json-render",
+      "description": "打开权限管理控制台（需超管）：按功能模块展示全部租户授权矩阵（桥侧组装 json-render spec）+ 角色模板清单",
+      "params": []
+    },
+    {
+      "name": "apply_permission_preset",
+      "mode": "write",
+      "module": null,
+      "system_tool": true,
+      "write_gate": true,
+      "idempotent": true,
+      "channel": "admin",
+      "card_type": "confirm-result",
+      "description": "为租户一键套用角色模板整体覆盖权限条目（需超管）；模板：运营全权/选品助理（只读+采集）/财务报表/新手试用（默认关闭）",
+      "params": [
+        {"name": "tenantId", "type": "integer", "required": true, "constraint": "租户 ID，整数 ≥1"},
+        {"name": "preset", "type": "string", "required": true, "constraint": "模板名（permission_console 卡上列出全部可用模板）"}
+      ]
+    },
+    {
+      "name": "list_permissions",
+      "mode": "read",
+      "module": null,
+      "system_tool": true,
+      "write_gate": true,
+      "idempotent": false,
+      "channel": "admin",
+      "card_type": "data-table",
+      "description": "查询权限配置（需超管或管理员）；不传 tenantId 返回全表；语义为读但被列入 WRITE_TOOL_FACE 闸门面（统一转 ask）",
+      "params": [
+        {"name": "tenantId", "type": "integer", "required": false, "constraint": "不传返回全表"}
+      ]
+    },
+    {
+      "name": "login",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "auth",
+      "card_type": "login-result",
+      "description": "登录 SPE 平台（用户名+密码），JWT 自动存储后续工具用该身份；密码只在本次调用使用不存储；不进写闸门（用户主动提供凭证即确认），不进 SYSTEM_TOOLS（被禁租户不得借 login 换身份绕过）",
+      "params": [
+        {"name": "username", "type": "string", "required": true, "constraint": "用户名"},
+        {"name": "password", "type": "string", "required": true, "constraint": "密码"}
+      ]
+    },
+    {
+      "name": "logout",
+      "mode": "read",
+      "module": null,
+      "system_tool": false,
+      "write_gate": false,
+      "idempotent": false,
+      "channel": "auth",
+      "card_type": "login-result",
+      "description": "退出登录：清除运行期登录 JWT，业务通道回落启动时配置的静态身份",
+      "params": []
+    }
+  ],
+  "error_codes": [
+    {"code": "TOOL_BUDGET_EXCEEDED", "guidance": "按次预算已用尽：不要重试本工具，用已取数据回答并如实告知"},
+    {"code": "UPSTREAM_SESSION_EXPIRED", "guidance": "上游 Ozon 会话过期：提示用户到「平台对接」页重新登录，恢复前本工具不可用"},
+    {"code": "JEV_DISABLED", "guidance": "Jev 打分链路未启用：不要重试，如实说明本次没有 Jev 评级，改用已取数据回答"},
+    {"code": "JEV_UNAVAILABLE", "guidance": "Jev 上游本次不可用：不要重试，如实说明本次没有 Jev 评级"},
+    {"code": "TOOL_NO_DATA", "guidance": "本次查询无可用数据：不要重试，换筛选条件或换 SKU，不编造数据"},
+    {"code": "INSUFFICIENT_CREDIT", "guidance": "账户积分不足：提示用户充值后再试"},
+    {"code": "SESSION_NOT_FOUND", "guidance": "内部信号：会话在后端不存在，桥自动重建后重试一次；正常不直达模型"},
+    {"code": "SESSION_NOT_ACTIVE", "guidance": "内部信号：会话不活跃，桥自动重建后重试一次；正常不直达模型"},
+    {"code": "TOOL_NOT_IMPLEMENTED", "guidance": "后端未实现该工具：以原始错误为准，不要重试"},
+    {"code": "UNKNOWN_TOOL", "guidance": "后端不认识该工具名：核对后改用工具目录内工具"},
+    {"code": "INVALID_ARGS", "guidance": "参数校验失败：按提示修正参数后再调用"},
+    {"code": "BIZ_AUTH_FAILED", "guidance": "检查 SPE_AGENT_JWT 是否有效或过期"},
+    {"code": "BIZ_FORBIDDEN", "guidance": "该接口需要更高账号角色，hot_products 需 ADMIN"},
+    {"code": "BIZ_NOT_FOUND", "guidance": "检查参数；租户未绑定店铺时先到 SPE 后台绑定"},
+    {"code": "BIZ_NO_STORE", "guidance": "当前租户未绑定启用的 Ozon 店铺"},
+    {"code": "BIZ_VALIDATION_FAILED", "guidance": "参数校验失败，检查参数后重试"},
+    {"code": "BIZ_INSUFFICIENT_CREDIT", "guidance": "告知用户积分不足需充值，不要重试；充值后可再执行"},
+    {"code": "DRAFT_NOT_FOUND", "guidance": "先用 generate_listing 生成草稿，再执行本操作"},
+    {"code": "YUXI_NOT_FOUND", "guidance": "该知识在 Yuxi 不存在或无权访问——确认记录ID 来自 kb_list/yuxi_kb_search；跨租户不可见是预期行为"},
+    {"code": "YUXI_DUPLICATE_CONTENT", "guidance": "该文件内容已存在，无需重复上传——用 kb_list/yuxi_kb_search 确认；确需重传先删除或修改"},
+    {"code": "YUXI_RESEARCH_TIMEOUT", "guidance": "深度研究超时未终态：run 仍在后台，同题再调续取同一 run（不重复耗算力）；避免高频重发"},
+    {"code": "YUXI_RESEARCH_FAILED", "guidance": "深度研究失败（failed/cancelled/interrupted）：以原始错误为准（含 run_id），不要原样重试"}
+  ],
+  "error_semantics": {
+    "known_codes_source": "errors.ts GUIDANCE 键集合（KNOWN_ERROR_CODES 派生），共 22 码",
+    "fallback_guidance": "未知/空码回落通用文案：如实说明失败、不编造数据；Object.hasOwn 防原型链穿透（'__proto__'/'constructor' 不透传）",
+    "error_wire_format": "失败返回单 text 块 `${code}: ${message}\\n处置：${guidance}` 且 isError:true",
+    "runtime_codes_outside_table": [
+      "TOOL_UPSTREAM_ERROR",
+      "TOOL_UPSTREAM_TIMEOUT",
+      "SESSION_CREATE_FAILED",
+      "AUTH_FAILED",
+      "YUXI_NOT_CONFIGURED",
+      "NAV_ROUTE_REJECTED"
+    ],
+    "runtime_codes_note": "以上运行时码不在 errors.ts C-13 映射表，走 FALLBACK_GUIDANCE；YUXI_NOT_CONFIGURED 是 kb_upload/yuxi_research/yuxi_kb_search 运行时守卫的响亮报错（不静默回落）"
+  },
+  "write_receipts": {
+    "source": "plugins/mcp-bridge/src/write-receipts.ts（契约 C-26）",
+    "window_ms": 120000,
+    "window_note": "C-26 去重窗口 120 秒，契约常量；窗口锚点=回执落缓存时刻（run 完成时）——写请求耗时越长完成后可去重窗口越完整",
+    "op_key_formula": "sha256(tool + '\\n' + stableStringify(args))",
+    "stable_stringify": "对象键升序、数组保序、原始值 JSON.stringify——同内容异键序必产生同串（键序无关去重）",
+    "operation_id_format": "op_{tool}_{seq}（seq 进程内递增；duplicate 也回吐首执同一 operationId——同一操作不是新操作）",
+    "duplicate_note_literal": "（120 秒内重复请求，未再次执行后端写）",
+    "duplicate_note_usage": "confirm-result 信封 summary 在 duplicate 时追加该契约逐字句",
+    "failure_policy": "失败不缓存：run 抛错时本层不落任何缓存（异常冒泡 errorResult），重试真正重跑",
+    "inflight_dedup": "同 opKey 并发到达（首执未完成）共享同一在飞 Promise，run 恰执行一次，后到者 duplicate:true；首执失败异常共享冒泡给所有等待者且不缓存",
+    "storage": "纯进程内存 Map（桥与 dsh 会话 1:1，进程生命周期即窗口生命周期）；无 TTL 清理线程，过期条目在下一次同 opKey 到达时被覆盖",
+    "confirm_result_envelope": "{blockId, ui:'confirm-result', v:1, data:{operationId, tool, ok:true, duplicate, summary, details}}",
+    "gated_write_tools_exec_tracked": [
+      "apply_dynamic_price",
+      "restock_inventory",
+      "gift_credits",
+      "generate_listing",
+      "build_rich_content",
+      "generate_variant_titles",
+      "host_source_images",
+      "generate_ozon_images",
+      "kb_upload",
+      "yuxi_research",
+      "grant_permission",
+      "revoke_permission",
+      "apply_permission_preset"
+    ],
+    "exempt_from_gate_and_receipts": [
+      "preview_dynamic_price",
+      "collect_products"
+    ],
+    "exempt_note": "两预览类不进写审批闸门、不做幂等去重；login 不进闸门（用户主动提供凭证即确认）也不走 execTracked；list_permissions/permission_console 不走 execTracked",
+    "per_tool_op_keys": {
+      "apply_dynamic_price": "{priceId}",
+      "restock_inventory": "{inventoryId, quantity, unitCost}",
+      "gift_credits": "{tenantId, amount} 或 {tenantId, amount, remark}（remark 缺省不带键）",
+      "generate_listing": "{sourceProductId, store: storeName}（按参数面去重，不按解析结果——store 名与缺省首店 opKey 不同）",
+      "build_rich_content": "{sourceProductId}",
+      "generate_variant_titles": "{sourceProductId}",
+      "host_source_images": "{sourceProductId}",
+      "generate_ozon_images": "{sourceProductId, count: count ?? null}",
+      "kb_upload": "{scope, kbId, filename, contentHash}，contentHash=sha256(content) 前 16 位（I-1：kbId 必进键——同 filename+content 换登录租户重传是真实新操作，跨租户不共享幂等窗口）",
+      "yuxi_research": "{question}（截断后原文）；另 Yuxi 侧 request_id=spe-research-<sha256(question) 前 16 位> 同题归并同一 run（跨窗口兜底）",
+      "grant_permission": "{tenantId, tools, mode}",
+      "revoke_permission": "{tenantId, tools}",
+      "apply_permission_preset": "{tenantId, preset}"
+    }
+  },
+  "write_gate": {
+    "source": "plugins/spe-gate/src/gate.ts",
+    "wire_prefix": "mcp__spe__",
+    "face_size": 14,
+    "tools": [
+      "apply_dynamic_price",
+      "restock_inventory",
+      "gift_credits",
+      "generate_listing",
+      "build_rich_content",
+      "generate_variant_titles",
+      "host_source_images",
+      "generate_ozon_images",
+      "apply_permission_preset",
+      "grant_permission",
+      "revoke_permission",
+      "list_permissions",
+      "kb_upload",
+      "yuxi_research"
+    ],
+    "decision_semantics": "命中面内 wire 名转 {kind:'ask', reason:'SPE 写操作需人工确认：<toolName>'}，其余一律 allow（含 preview 与 collect_products）；fail-closed 语义由 dsh approval 服务提供，插件只转 ask 不自造确认"
+  },
+  "card_tools": {
+    "source": "plugins/cards-ui/src/client/keys.ts",
+    "size": 46,
+    "wire_keys": [
+      "mcp__spe__search_products",
+      "mcp__spe__keyword_hot_words",
+      "mcp__spe__competitor_analysis",
+      "mcp__spe__store_metrics",
+      "mcp__spe__score_candidates",
+      "mcp__spe__generate_report",
+      "mcp__spe__navigate_to",
+      "mcp__spe__render_ui",
+      "mcp__spe__list_orders",
+      "mcp__spe__inventory_health",
+      "mcp__spe__hot_products",
+      "mcp__spe__monthly_report",
+      "mcp__spe__source_products",
+      "mcp__spe__list_stores",
+      "mcp__spe__preview_dynamic_price",
+      "mcp__spe__apply_dynamic_price",
+      "mcp__spe__restock_inventory",
+      "mcp__spe__gift_credits",
+      "mcp__spe__collect_products",
+      "mcp__spe__build_rich_content",
+      "mcp__spe__generate_variant_titles",
+      "mcp__spe__host_source_images",
+      "mcp__spe__generate_ozon_images",
+      "mcp__spe__generate_listing",
+      "mcp__spe__credit_transactions",
+      "mcp__spe__dashboard_stats",
+      "mcp__spe__collection_status",
+      "mcp__spe__get_source_draft",
+      "mcp__spe__permission_console",
+      "mcp__spe__apply_permission_preset",
+      "mcp__spe__list_products",
+      "mcp__spe__sales_summary",
+      "mcp__spe__sales_products",
+      "mcp__spe__low_stock",
+      "mcp__spe__replenishment",
+      "mcp__spe__ops_plans",
+      "mcp__spe__grant_permission",
+      "mcp__spe__revoke_permission",
+      "mcp__spe__list_permissions",
+      "mcp__spe__login",
+      "mcp__spe__logout",
+      "mcp__spe__kb_list",
+      "mcp__spe__kb_read",
+      "mcp__spe__yuxi_kb_search",
+      "mcp__spe__kb_upload",
+      "mcp__spe__yuxi_research"
+    ],
+    "note": "恰等于工具面 47 减 spe_ping（连通性自检无卡片信封不注册）；顺序固定，为注册对账 SSOT"
+  },
+  "permissions": {
+    "source": "plugins/mcp-bridge/src/permissions.ts",
+    "system_tools": [
+      "spe_ping",
+      "navigate_to",
+      "grant_permission",
+      "revoke_permission",
+      "list_permissions",
+      "permission_console",
+      "apply_permission_preset",
+      "kb_list",
+      "kb_read",
+      "yuxi_kb_search"
+    ],
+    "store_file": "$DSH_HOME/spe-permissions.json（未设 DSH_HOME 回落 ~/.dsh/），形状 {version:1, entries:{<tenantId>:{mode,denied,allowed}}}",
+    "mode_semantics": "allow-all=默认全开+denied 黑名单；deny-all=默认全关+allowed 白名单；文件不存在/损坏容忍为空表（零配置全开）",
+    "enforcement": "listTools 过滤 + CallTool 执行前拦截（双保险）；系统级免检；权限面未激活不过滤；解析租户失败 fail-open 不过滤但拦截分支 tenantId===null 放行；被禁工具调用返回带内拒绝且零后端 HTTP",
+    "presets": ["运营全权", "选品助理", "财务报表", "新手试用"],
+    "tool_modules_note": "TOOL_MODULES 覆盖 28 个非系统工具（7 模块）；系统级 10 工具不进矩阵（不可禁不出现在权限控制台）；TOOL_CATALOG 6 个 agent 会话工具与 list_stores/login/logout 也不在矩阵（受权限面管控但不出现在控制台分组）"
+  },
+  "channels": {
+    "agent-session": "TOOL_CATALOG 6 工具：POST /api/v1/agent/tools/{tool}，X-Agent-Token 头，需 SPE 会话（sessions.ts 注册表 dsh 会话键→SPE 会话 id；POST /api/v1/agent/sessions 创建，失败归一 SESSION_CREATE_FAILED；SESSION_NOT_FOUND/NOT_ACTIVE 触发桥重建后重试一次）；超时 120s",
+    "biz-get": "BIZ_TOOL_CATALOG 19 读工具：GET 业务端点，Bearer userJwt，零会话零 X-Agent-Token",
+    "biz-post": "WRITE_TOOL_CATALOG 中 10 个 SPE 端点工具：POST/PUT 业务端点，Bearer userJwt；generate_listing 超时 300s",
+    "yuxi": "kb_upload/yuxi_research：Yuxi HTTP 通道全程 Bearer adminToken（五连链 files/upload→documents/add→documents/parse→files 轮询→documents/index；agent-call runs/result）；出站 URL/body 恒无 tenantId",
+    "admin": "管理 5 工具：桥内 PermissionStore（grant/revoke/apply_preset 变更+落盘；list/console 纯读），grant/revoke/apply_preset 现取 /auth/me role 校验超管",
+    "auth": "login：POST /api/v1/auth/login 换 JWT 存运行态；logout 清除回落静态身份",
+    "local": "spe_ping/navigate_to/render_ui：本地分支不触后端不建会话"
+  },
+  "envelope_format": {
+    "success": "单 text 块 = JSON.stringify({blockId, ui, v:1, data})，无前缀无摘要行；blockId 格式 blkl_{tool}_{seq}（biz/write 系）；navigate 固定 blkl_nav_{routeId}；agent 通道 blockId 由 SPE 后端下发（形如 blk_…）",
+    "failure": "isError:true 单 text 块 `${code}: ${message}\\n处置：${guidance}`"
+  },
+  "polling_constants": {
+    "kb_upload_poll_interval_ms": 500,
+    "kb_upload_poll_deadline_ms": 15000,
+    "kb_upload_poll_env_override": "SPE_KB_UPLOAD_POLL_DEADLINE_MS（仅测试用，非法/缺省/非正回落 15s）",
+    "yuxi_research_poll_interval_ms": 3000,
+    "yuxi_research_deadline_ms": 240000,
+    "yuxi_research_poll_env_override": "SPE_YUXI_RESEARCH_POLL_INTERVAL_MS / SPE_YUXI_RESEARCH_DEADLINE_MS（仅测试用）",
+    "session_create_timeout_ms": 120000,
+    "backend_tool_timeout_ms": 120000,
+    "generate_listing_timeout_ms": 300000
+  }
+}

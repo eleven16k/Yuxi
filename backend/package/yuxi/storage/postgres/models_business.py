@@ -1028,6 +1028,28 @@ class ScheduledAgentRun(Base):
         }
 
 
+class UserSpeCredential(Base):
+    """用户级 SPE 登录凭据（JWT），login 工具唯一写入口。"""
+
+    __tablename__ = "user_spe_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uid = Column(String, ForeignKey("users.uid"), nullable=False, unique=True, index=True)
+    user_jwt = Column(String(2048), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    user = relationship("User")
+
+    def to_dict(self) -> dict[str, Any]:
+        # 永不回显 user_jwt 全文
+        return {
+            "uid": self.uid,
+            "has_credential": bool(self.user_jwt),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class APIKey(Base):
     """API Key 模型"""
 

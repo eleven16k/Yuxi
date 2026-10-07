@@ -39,6 +39,11 @@ from yuxi.permissions import (
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import tasker
+from yuxi.services.knowledge_file_service import (
+    KnowledgeFileDuplicateError,
+    KnowledgeFileTypeError,
+    upload_knowledge_file_bytes,
+)
 from yuxi.services.workspace_service import read_workspace_file_bytes
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.storage.postgres.models_business import User
@@ -1651,15 +1656,6 @@ async def upload_file(
 
     logger.debug(f"Received upload file with filename: {file.filename}")
 
-    ext = os.path.splitext(file.filename)[1].lower()
-
-    if not is_supported_file_extension(file.filename):
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
-
-    basename, ext = os.path.splitext(file.filename)
-    # 直接使用原始文件名（小写）
-    filename = f"{basename}{ext}".lower()
-
     try:
         file_bytes = await read_upload_with_limit(
             file,
@@ -1669,45 +1665,15 @@ async def upload_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    content_hash = await calculate_content_hash(file_bytes)
-
-    file_exists = await knowledge_base.file_existed_in_db(kb_id, content_hash)
-    if file_exists:
-        raise HTTPException(
-            status_code=409,
-            detail="数据库中已经存在了相同内容文件，File with the same content already exists in this database",
-        )
-
-    # 直接上传到MinIO，添加时间戳区分版本
-    timestamp = int(time.time() * 1000)
-    minio_filename = f"{basename}_{timestamp}{ext}"
-
-    bucket_name = MinIOClient.KB_BUCKETS["documents"]
-    folder = kb_id if kb_id else "unknown"
-    object_name = f"{folder}/upload/{minio_filename}"
-
-    # 上传到MinIO
-    minio_url = await aupload_file_to_minio(bucket_name, object_name, file_bytes)
-
-    # 检测同名文件（基于原始文件名）
-    same_name_files = await knowledge_base.get_same_name_files(kb_id, filename)
-    has_same_name = len(same_name_files) > 0
-
-    return {
-        "message": "File successfully uploaded",
-        "file_path": minio_url,  # MinIO路径作为主要路径
-        "minio_path": minio_url,  # MinIO路径
-        "kb_id": kb_id,
-        "content_hash": content_hash,
-        "filename": filename,  # 原始文件名（小写）
-        "original_filename": basename,  # 原始文件名（去掉后缀）
-        "size": len(file_bytes),
-        "minio_filename": minio_filename,  # MinIO中的文件名（带时间戳）
-        "object_name": object_name,
-        "bucket_name": bucket_name,  # MinIO存储桶名称
-        "same_name_files": same_name_files,  # 同名文件列表
-        "has_same_name": has_same_name,  # 是否包含同名文件标志
-    }
+    try:
+        uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=file.filename, file_bytes=file_bytes)
+    except KnowledgeFileDuplicateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except KnowledgeFileTypeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "File successfully uploaded", **uploaded}
 
 
 @knowledge.get("/files/supported-types")

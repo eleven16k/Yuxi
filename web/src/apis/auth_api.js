@@ -61,6 +61,16 @@ async function login(credentials) {
   return apiPost('/api/auth/token', formData, {}, false)
 }
 
+/**
+ * SPE 账号联邦登录：凭 SPE 用户名/密码换取 Yuxi 会话（登录即绑定 SPE 身份）
+ */
+async function speLogin(credentials) {
+  const formData = new FormData()
+  formData.append('username', credentials.loginId)
+  formData.append('password', credentials.password)
+  return apiPost('/api/auth/spe-token', formData, {}, false)
+}
+
 async function initialize(admin) {
   return apiPost('/api/auth/initialize', admin, {}, false)
 }
@@ -132,6 +142,7 @@ async function approveCLIAuthSession(userCode) {
 
 export const authApi = {
   login,
+  speLogin,
   initialize,
   checkFirstRun,
   getUsers,

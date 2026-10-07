@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 9
+BUSINESS_SCHEMA_VERSION = 10
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -510,6 +510,37 @@ class PostgresManager(metaclass=SingletonMeta):
                     INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
                     VALUES ('business', 9, CURRENT_TIMESTAMP)
                     ON CONFLICT (domain) DO UPDATE SET version = 9, applied_at = EXCLUDED.applied_at
+                """)
+            )
+
+    async def upgrade_user_spe_credentials(self) -> None:
+        """为 SPE WebAgent 增加 per-user 凭据表并记录版本。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            version = await conn.scalar(
+                text(f"SELECT version FROM {SCHEMA_VERSION_TABLE} WHERE domain = 'business' FOR UPDATE")
+            )
+            if version == 10:
+                return
+            if version not in (None, 2, 7, 8, 9):
+                raise RuntimeError(f"Unsupported business schema version: {version}")
+            await conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS user_spe_credentials (
+                        id SERIAL PRIMARY KEY,
+                        uid VARCHAR NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+                        user_jwt VARCHAR(2048) NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        CONSTRAINT uq_user_spe_credentials_uid UNIQUE (uid)
+                    )
+                """)
+            )
+            await conn.execute(
+                text(f"""
+                    INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
+                    VALUES ('business', 10, CURRENT_TIMESTAMP)
+                    ON CONFLICT (domain) DO UPDATE SET version = 10, applied_at = EXCLUDED.applied_at
                 """)
             )
 

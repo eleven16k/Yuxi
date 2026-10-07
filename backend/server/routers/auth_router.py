@@ -42,6 +42,7 @@ from yuxi.storage.minio.client import normalize_public_minio_url
 from yuxi.storage.postgres.models_business import User
 from yuxi.repositories.department_repository import DepartmentRepository
 from yuxi.repositories.user_repository import UserRepository
+from yuxi.services.spe_identity_service import login_with_spe
 from yuxi.utils import logger
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -215,6 +216,46 @@ def _raise_cli_auth_error(exc: CLIAuthError) -> None:
 # =============================================================================
 # === 认证分组 ===
 # =============================================================================
+
+
+@auth.post("/spe-token", response_model=Token)
+async def login_with_spe_account(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """SPE 账号联邦登录：验证外部身份源并映射/开户 Yuxi 用户，登录即绑定 SPE JWT。"""
+    client_ip = extract_client_ip(request)
+    allowed, retry_after = await check_login_rate_limit(client_ip, form_data.username)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录尝试过于频繁，请稍后再试",
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        user, spe_profile = await login_with_spe(username=form_data.username, password=form_data.password, db=db)
+    except HTTPException:
+        await record_login_failure(client_ip, form_data.username)
+        raise
+    user.reset_failed_login()
+    user.last_login = utc_now_naive()
+    await db.commit()
+    await clear_login_failures(client_ip, form_data.username)
+
+    access_token = AuthUtils.create_access_token({"sub": str(user.id)})
+    await log_operation(db, user.id, "SPE 账号登录", f"SPE 角色 {spe_profile.get('role')}")
+    await db.commit()
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+        "uid": user.uid,
+        "phone_number": user.phone_number,
+        "avatar": user.avatar,
+        "role": user.role,
+    }
 
 
 @auth.post("/token", response_model=Token)

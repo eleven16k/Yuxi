@@ -7,8 +7,18 @@ ToolApprovalMode = Literal["default", "always_trust"]
 
 DEFAULT_TOOL_APPROVAL_MODE: ToolApprovalMode = "default"
 TOOL_APPROVAL_MODES = frozenset({"default", "always_trust"})
-# 默认审批模式下需要拦截或对子 Agent 隐藏的敏感 backend 工具。
-SENSITIVE_BACKEND_TOOLS = frozenset({"write_file", "edit_file", "execute"})
+# SPE 闸门写工具 14 名。此处内联字面量而非导入 spe 包：context 在 agents
+# 包初始化早期导入本模块，经 spe/__init__ 拉起 services 会成环；与
+# yuxi.agents.toolkits.spe.contract_names 的单一来源由对账测试守护恒等。
+_SPE_WRITE_GATE_TOOLS = frozenset({
+    "apply_dynamic_price", "restock_inventory", "gift_credits", "build_rich_content",
+    "generate_variant_titles", "host_source_images", "generate_ozon_images", "generate_listing",
+    "kb_upload", "yuxi_research", "grant_permission", "revoke_permission",
+    "apply_permission_preset", "list_permissions",
+})
+# 默认审批模式下需要拦截或对子 Agent 隐藏的敏感 backend 工具；
+# SPE 闸门写扩员（T04：无 when 谓词——任何参数组合都需确认）。
+SENSITIVE_BACKEND_TOOLS = frozenset({"write_file", "edit_file", "execute"}) | _SPE_WRITE_GATE_TOOLS
 _ALLOWED_DECISIONS = ["approve", "reject"]
 
 
@@ -29,13 +39,15 @@ def create_tool_approval_middleware(
         return None
 
     write_requires_approval = _project_write_requires_approval(current_project_path or "")
-    return HumanInTheLoopMiddleware(
-        interrupt_on={
-            "write_file": {"allowed_decisions": _ALLOWED_DECISIONS, "when": write_requires_approval},
-            "edit_file": {"allowed_decisions": _ALLOWED_DECISIONS, "when": write_requires_approval},
-            "execute": {"allowed_decisions": _ALLOWED_DECISIONS},
-        }
-    )
+    interrupt_on = {
+        "write_file": {"allowed_decisions": _ALLOWED_DECISIONS, "when": write_requires_approval},
+        "edit_file": {"allowed_decisions": _ALLOWED_DECISIONS, "when": write_requires_approval},
+        "execute": {"allowed_decisions": _ALLOWED_DECISIONS},
+    }
+    # SPE 写工具：mode 驱动（T04 定案）——default 拦截，always_trust 在上方整体放行
+    for tool_name in sorted(_SPE_WRITE_GATE_TOOLS):
+        interrupt_on[tool_name] = {"allowed_decisions": _ALLOWED_DECISIONS}
+    return HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
 
 
 def _project_write_requires_approval(current_project_path: str):

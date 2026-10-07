@@ -163,12 +163,18 @@
               <!-- 登录表单 -->
               <div v-else class="login-form">
                 <a-form :model="loginForm" @finish="handleLogin" layout="vertical">
+                  <a-form-item class="login-mode-toggle">
+                    <a-radio-group v-model:value="speLoginMode" button-style="solid" size="small">
+                      <a-radio-button :value="false">平台账号</a-radio-button>
+                      <a-radio-button :value="true">SPE 账号</a-radio-button>
+                    </a-radio-group>
+                  </a-form-item>
                   <a-form-item
-                    label="登录账号"
+                    :label="speLoginMode ? 'SPE 用户名' : '登录账号'"
                     name="loginId"
-                    :rules="[{ required: true, message: '请输入UID或手机号' }]"
+                    :rules="[{ required: true, message: speLoginMode ? '请输入SPE用户名' : '请输入UID或手机号' }]"
                   >
-                    <a-input v-model:value="loginForm.loginId" placeholder="UID或手机号">
+                    <a-input v-model:value="loginForm.loginId" :placeholder="speLoginMode ? 'SPE 用户名' : 'UID或手机号'">
                       <template #prefix>
                         <user-icon size="18" />
                       </template>
@@ -353,6 +359,7 @@ const lockRemainingTime = ref(0)
 const lockCountdown = ref(null)
 
 // 登录表单
+const speLoginMode = ref(false)
 const loginForm = reactive({
   loginId: '', // 支持uid或phone_number登录
   password: ''
@@ -452,7 +459,8 @@ const handleLogin = async () => {
 
     await userStore.login({
       loginId: loginForm.loginId,
-      password: loginForm.password
+      password: loginForm.password,
+      spe: speLoginMode.value
     })
 
     message.success('登录成功')

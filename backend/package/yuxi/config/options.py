@@ -223,6 +223,31 @@ remote_skill_source_policy = Option(
     },
 )
 
+spe_agent_opts = Option(
+    key="spe_agent_opts",
+    name="SPE Agent",
+    description="SPE 运营 WebAgent 的系统级连接配置（用户级凭据由 login 工具按用户存储）。",
+    params={
+        "fields": [
+            {
+                "key": "base_url",
+                "label": "后端地址",
+                "type": "string",
+                "environment": "SPE_AGENT_BASE_URL",
+                "help": "SPE 后端 Base URL，留空时读取 SPE_AGENT_BASE_URL。",
+            },
+            {
+                "key": "service_token",
+                "label": "服务令牌",
+                "type": "password",
+                "environment": "SPE_AGENT_SERVICE_TOKEN",
+                "sensitive": True,
+                "help": "agent 通道服务令牌（X-Agent-Token），留空时读取 SPE_AGENT_SERVICE_TOKEN。",
+            },
+        ]
+    },
+)
+
 OPTION_DEFINITIONS = {
     option.key: option
     for option in (
@@ -231,6 +256,7 @@ OPTION_DEFINITIONS = {
         pp_structure_v3_ocr_host_opts,
         paddleocr_api_opts,
         remote_skill_source_policy,
+        spe_agent_opts,
         system_options,
     )
 }
