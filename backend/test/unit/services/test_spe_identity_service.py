@@ -165,3 +165,23 @@ async def test_credit_query_upstream_error_maps_502(wiring) -> None:
     with pytest.raises(HTTPException) as info:
         await svc.login_with_spe(username="alice", password="pw", db=_FakeScalarSession([]))
     assert info.value.status_code == 502
+
+
+async def test_first_login_provisions_personal_kb(wiring) -> None:
+    """开户即预建个人知识库（P1#05）；既有用户登录不重复建。"""
+    calls: list[tuple[str, str]] = []
+
+    async def fake_provision(uid: str, display_name: str) -> None:
+        calls.append((uid, display_name))
+
+    wiring.monkeypatch.setattr(svc, "_provision_personal_kb", fake_provision)
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
+    db = _FakeScalarSession([])
+    user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
+    assert calls == [("spe_alice", "alice")]
+
+    # 既有用户（用户命中）不再触发
+    existing = SimpleNamespace(id=7, uid="spe_alice", username="alice", role="user", department_id=1, is_deleted=0)
+    db2 = _FakeScalarSession([existing])
+    await svc.login_with_spe(username="alice", password="pw", db=db2)
+    assert calls == [("spe_alice", "alice")]

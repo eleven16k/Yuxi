@@ -46,6 +46,33 @@ def spe_uid(username: str) -> str:
     return f"{SPE_USER_UID_PREFIX}{username}"
 
 
+async def _provision_personal_kb(uid: str, display_name: str) -> None:
+    """联邦开户自动预建私有知识库（P1#05）。
+
+    read_scope=user 仅本人可见；embedding 走系统已配的 minimax:embo-01。
+    失败不阻断登录——只记日志，卖家可经知识中心/管理员补救。
+    """
+    import logging
+
+    try:
+        from yuxi.knowledge.runtime import knowledge_base
+
+        await knowledge_base.create_database(
+            f"{display_name}的知识库",
+            f"联邦开户自动创建的私有知识库（{uid}）：类目笔记、供应商档案、俄语文案素材。",
+            kb_type="milvus",
+            embedding_model_spec="minimax:embo-01",
+            share_config={
+                "version": 2,
+                "read_scope": {"access_level": "user", "user_uids": [uid]},
+                "manage_scope": None,
+            },
+            created_by=uid,
+        )
+    except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
+        logging.getLogger(__name__).warning("联邦开户预建个人知识库失败（uid=%s）：%s", uid, e)
+
+
 async def _resolve_department_id(db: AsyncSession) -> int:
     """SPE 外部用户部门 get-or-create。"""
     department = await db.scalar(select(Department).where(Department.name == SPE_DEPARTMENT_NAME))
@@ -115,6 +142,8 @@ async def login_with_spe(
         )
         db.add(user)
         await db.flush()
+        # 开户即预建个人知识库（created_by 无外键，独立会话写入不依赖本事务提交）
+        await _provision_personal_kb(uid, display_name)
     else:
         # 身份源拥有角色：每次登录同步，防止 SPE 侧降权后 Yuxi 侧残留
         user.role = map_spe_role_to_yuxi(spe_profile.get("role"))
