@@ -27,6 +27,7 @@ PRESET = AgentPreset(
             "product-selection-workflow",
             "source-listing-workflow",
             "ozon-selection-agent",
+            "spe-ops",
         ],
     },
 )
