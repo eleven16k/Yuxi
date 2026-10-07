@@ -46,10 +46,10 @@ spe-agent 是绑定 dsh CLI 的 SPE Agent 发行版（Node stdio MCP 桥，工�
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
 | 契约快照与桥源码一致（47 工具、14 写、模块归属） | 快照漂移或计数与 s2t 契约不符 | `backend/test/unit/toolkits/spe/fixtures/` 快照 + 对账断言 | `docker compose exec api uv run --group test --no-sync pytest test/unit/toolkits/spe -m "not slow"` 快照不变量测试（本机容器需 `--no-sync`，见 PR 说明） | 人为增删快照工具行，计数断言变红 | Passed |
-| Yuxi 用户对话取数回执含真实 SPE staging 数据 | 工具面/认证/取数链路断裂 | `toolkits/spe` 工具 + SPE 后端 | 批次 5 E2E：staging 真机全链路 | 凭据缺失/过期时结构化报错而非静默空结果 | Not run |
+| Yuxi 用户对话取数回执含真实 SPE staging 数据 | 工具面/认证/取数链路断裂 | `toolkits/spe` 工具 + SPE 后端 | 批次 5 E2E：staging 真机全链路 | 凭据缺失/过期时结构化报错而非静默空结果 | Passed（2026-10-08 生产只读 E2E：LLM 驱动取真实数据，见 octop-spe 工作区验收记录；写链 V4 待工作台走查） |
 | 14 写工具调用必经人工审批，confirm 回执语义保留 | 审批覆盖缺口或回执幂等丢失 | `tool_approval` 扩展 + spe 写回执 | integration：审批放行/拒绝两路 + 幂等重放断言 | 撤掉审批谓词，写工具直接执行 → 测试变红 | Not run |
 | per-request 身份：不同 uid 解析各自凭据，跨租户目标零出站 | 身份串号或探测出站 | spe 凭据解析层 | unit（假后端）+ integration：双 uid 各自凭据断言 | uid 无凭据时调用 → fail-closed 错误，零 HTTP 出站 | Not run |
-| yuxi 三工具内化后行为与 s2t 契约等价 | 内化路径行为漂移 | 内化工具 + 契约 oracle 对账测试 | unit：假后端契约对账（信封形状、降级、截断语义） | 改动任一信封字段 → 对账测试变红 | Not run |
+| yuxi 三工具内化后行为与 s2t 契约等价 | 内化路径行为漂移 | 内化工具 + 契约 oracle 对账测试 | unit：假后端契约对账（信封形状、降级、截断语义） | 改动任一信封字段 → 对账测试变红 | Passed（`test_spe_kb_tools.py`，2026-10-08 核对补记） |
 | Skill 激活才开放对应模块工具 | 门控失效工具全量可见 | `SkillsMiddleware` 本地 gated 机制 | unit：未激活 Skill 时工具对模型不可见 | 移除门控声明 → 可见性断言变红 | Not run |
 
 ## 风险
@@ -60,3 +60,9 @@ spe-agent 是绑定 dsh CLI 的 SPE Agent 发行版（Node stdio MCP 桥，工�
 - SPE staging 凭据（service token / 用户 JWT）发放节奏是批末真机验收的外部依赖；不到位时该批验收记 Not run。
 - dsh 冻结是单向决定：若未来需要回滚双宿主，需重建双源同步机制（Q4 已把契约事实源搬入 Yuxi）。
 - 浏览器自动化轨（部署级探针）不在本记录范围，其沙盒/凭据风险由后续独立决策承担。
+
+
+## 修订（2026-10-08，P1）
+
+- 审批闸扩员 14→18：新增订单状态机写工具 confirm/ship/cancel/refund_order（P1#06，冻结快照外扩展面，对账测试升级为「快照闸 ⊆ 全量闸，差集=扩展面」）
+- 写面开放机制定案：工具经 Skill tool_dependencies 注册、模型可见性按激活门控；spe-ops 技能开放运营 20 工具

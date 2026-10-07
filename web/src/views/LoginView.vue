@@ -182,11 +182,14 @@
                   </a-form-item>
 
                   <a-form-item
-                    label="密码"
+                    :label="speLoginMode ? 'SPE 密码' : '密码'"
                     name="password"
-                    :rules="[{ required: true, message: '请输入密码' }]"
+                    :rules="[{ required: true, message: speLoginMode ? '请输入SPE密码' : '请输入密码' }]"
                   >
-                    <a-input-password v-model:value="loginForm.password">
+                    <a-input-password
+                      v-model:value="loginForm.password"
+                      :placeholder="speLoginMode ? 'SPE 平台的账号密码' : '密码'"
+                    >
                       <template #prefix>
                         <lock-icon size="18" />
                       </template>
