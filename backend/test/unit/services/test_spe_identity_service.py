@@ -64,10 +64,10 @@ class _FakeOpts:
 
 class _FakeCredRepo:
     def __init__(self) -> None:
-        self.bound: list[tuple[str, str]] = []
+        self.bound: list[tuple[str, str, object]] = []
 
-    async def upsert_user_jwt(self, *, uid, user_jwt) -> None:
-        self.bound.append((uid, user_jwt))
+    async def upsert_user_jwt(self, *, uid, user_jwt, db=None) -> None:
+        self.bound.append((uid, user_jwt, db))
 
 
 @pytest.fixture
@@ -100,7 +100,7 @@ async def test_first_login_provisions_user_and_binds_jwt(wiring) -> None:
     assert user.uid == "spe_alice" and user.username == "alice"
     assert user.role == "admin"  # SPE ADMIN → Yuxi admin
     assert user.department_id == 101
-    assert wiring.cred.bound == [("spe_alice", "jwt-spe")]  # 登录即绑定
+    assert wiring.cred.bound == [("spe_alice", "jwt-spe", db)]  # 登录即绑定（同事务会话）
     assert db.added and db.flushed >= 1
 
 

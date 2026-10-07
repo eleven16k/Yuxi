@@ -121,5 +121,6 @@ async def login_with_spe(
     await db.refresh(user)
 
     # 登录即绑定：SPE JWT 入 per-user 凭据表，聊天内工具直接可用
-    await spe_credential_repository.upsert_user_jwt(uid=uid, user_jwt=spe_profile["token"])
+    # （同事务写入——新用户行尚未提交，凭据行必须与用户行同进同出）
+    await spe_credential_repository.upsert_user_jwt(uid=uid, user_jwt=spe_profile["token"], db=db)
     return user, spe_profile
