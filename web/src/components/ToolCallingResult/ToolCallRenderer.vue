@@ -45,6 +45,7 @@ import AskUserQuestionTool from './tools/AskUserQuestionTool.vue'
 import ExecuteTool from './tools/ExecuteTool.vue'
 import OcrParseFileTool from './tools/OcrParseFileTool.vue'
 import RememberMemoryTool from './tools/RememberMemoryTool.vue'
+import SpeUiBlock from './tools/SpeUiBlock.vue'
 import { getToolCallId, isHiddenToolCall } from './toolRegistry'
 
 const props = defineProps({
@@ -101,7 +102,55 @@ const TOOL_RENDERERS = {
   doubao_search: WebSearchTool,
   text_to_img_qwen_image: ImageTool,
   write_file: WriteFileTool,
-  write_todos: TodoListTool
+  write_todos: TodoListTool,
+  // SPE 运营工具：结果统一为 UiBlock 信封 {blockId, ui, v, data}，由分发器按 ui 渲染
+  apply_dynamic_price: SpeUiBlock,
+  apply_permission_preset: SpeUiBlock,
+  build_rich_content: SpeUiBlock,
+  collect_products: SpeUiBlock,
+  collection_status: SpeUiBlock,
+  competitor_analysis: SpeUiBlock,
+  credit_transactions: SpeUiBlock,
+  dashboard_stats: SpeUiBlock,
+  generate_listing: SpeUiBlock,
+  generate_ozon_images: SpeUiBlock,
+  generate_report: SpeUiBlock,
+  generate_variant_titles: SpeUiBlock,
+  get_source_draft: SpeUiBlock,
+  gift_credits: SpeUiBlock,
+  grant_permission: SpeUiBlock,
+  host_source_images: SpeUiBlock,
+  hot_products: SpeUiBlock,
+  inventory_health: SpeUiBlock,
+  kb_list: SpeUiBlock,
+  kb_read: SpeUiBlock,
+  kb_upload: SpeUiBlock,
+  keyword_hot_words: SpeUiBlock,
+  list_orders: SpeUiBlock,
+  list_permissions: SpeUiBlock,
+  list_products: SpeUiBlock,
+  list_stores: SpeUiBlock,
+  login: SpeUiBlock,
+  logout: SpeUiBlock,
+  low_stock: SpeUiBlock,
+  monthly_report: SpeUiBlock,
+  navigate_to: SpeUiBlock,
+  ops_plans: SpeUiBlock,
+  permission_console: SpeUiBlock,
+  preview_dynamic_price: SpeUiBlock,
+  render_ui: SpeUiBlock,
+  replenishment: SpeUiBlock,
+  restock_inventory: SpeUiBlock,
+  revoke_permission: SpeUiBlock,
+  sales_products: SpeUiBlock,
+  sales_summary: SpeUiBlock,
+  score_candidates: SpeUiBlock,
+  search_products: SpeUiBlock,
+  source_products: SpeUiBlock,
+  spe_ping: SpeUiBlock,
+  store_metrics: SpeUiBlock,
+  yuxi_kb_search: SpeUiBlock,
+  yuxi_research: SpeUiBlock
 }
 
 const currentRenderer = computed(() => TOOL_RENDERERS[toolId.value] || null)

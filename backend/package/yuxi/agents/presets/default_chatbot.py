@@ -21,6 +21,12 @@ PRESET = AgentPreset(
             "- 用简体中文回复；商品名等原文保留俄语/英语原文\n"
             "- 金额注明币种（₽ / CNY）；给结论同时给依据（排名、销量、转化率）"
         ),
-        "skills": "all",
+        "skills": [
+            "spe-account",
+            "knowledge-center",
+            "product-selection-workflow",
+            "source-listing-workflow",
+            "ozon-selection-agent",
+        ],
     },
 )
