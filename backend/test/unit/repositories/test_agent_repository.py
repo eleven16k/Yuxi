@@ -217,7 +217,7 @@ async def test_ensure_preset_creates_empty_config_subagent(monkeypatch):
     assert agent.backend_id == SUB_AGENT_BACKEND_ID
     assert agent.is_subagent is True
     assert agent.is_default is False
-    assert agent.config_json == {"context": dict(DEFAULT_CHATBOT_PRESET.context)}
+    assert agent.config_json == {"context": dict(GENERAL_PURPOSE.context)}
     assert agent.share_config == DEFAULT_SHARE_CONFIG
     assert agent.created_by == "system"
     assert db.added is agent
