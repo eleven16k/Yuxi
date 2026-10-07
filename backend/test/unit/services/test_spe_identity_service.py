@@ -10,10 +10,11 @@ from fastapi import HTTPException
 from yuxi.services import spe_identity_service as svc
 
 
-def test_role_mapping_full_including_superadmin() -> None:
-    """含超管全映射（2026-10-07 用户拍板）；未知值 fail-safe 向下。"""
-    assert svc.map_spe_role_to_yuxi("SUPER_ADMIN") == "superadmin"
-    assert svc.map_spe_role_to_yuxi("superadmin") == "superadmin"
+def test_role_mapping_tightened_no_superadmin_for_tenants() -> None:
+    """租户侧永不获得 superadmin（2026-10-07 收紧，spec §4.2）：
+    SUPER_ADMIN 映射 user；仅 ADMIN→admin；未知/缺失 fail-safe 向下。"""
+    assert svc.map_spe_role_to_yuxi("SUPER_ADMIN") == "user"
+    assert svc.map_spe_role_to_yuxi("superadmin") == "user"
     assert svc.map_spe_role_to_yuxi("ADMIN") == "admin"
     assert svc.map_spe_role_to_yuxi("ROLE_ADMIN") == "admin"
     assert svc.map_spe_role_to_yuxi("USER") == "user"
@@ -100,7 +101,7 @@ async def test_existing_user_role_synced_from_spe(wiring) -> None:
     existing = SimpleNamespace(id=7, uid="spe_alice", username="alice", role="user", department_id=1, is_deleted=0)
     db = _FakeScalarSession([existing])  # 用户命中
     user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
-    assert user.role == "superadmin"  # 身份源拥有角色：每次登录同步
+    assert user.role == "user"  # 身份源拥有角色：每次登录同步（SUPER_ADMIN 已收紧为 user）
     assert db.added == []  # 不重复开户
 
 

@@ -40,3 +40,10 @@ SPE WebAgent 迁移后的默认身份模型是两层分离：Yuxi 平台账号�
 - 证据口径：spe-token 未配置路径已真机验证、401/开户路径 unit 验证；前端仅做语法与存在性检查（Inspected），页面交互待用户实测。
 - 真实 SPE 登录链路（staging）未验证：角色串的真实取值（SUPER_ADMIN/ADMIN/USER 为推测形状）需联调时校准映射函数；`username` 字段缺失时回落登录输入。
 - 自动开户用户无手机号：API Key 等要求 department 的路径已由「SPE 外部用户」部门满足。
+
+## 修订（2026-10-07，P0）
+
+角色映射收紧（依据 octop-spe 工作区 spec §4.2）：SPE `SUPER_ADMIN` 由
+`superadmin` 改为 `user`。理由：对外部商业租户开放平台超管是提权隐患，
+平台运营改用本地 superadmin 账号。既有联邦用户在下次登录时由角色同步
+逻辑自动降级，无需数据迁移。
