@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from yuxi.agents.buildin.chatbot.context import ChatBotContext
 
+from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_CHATBOT_PRESET
 from yuxi.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
 from yuxi.repositories.agent_repository import (
     AgentRepository,
@@ -166,7 +167,7 @@ async def test_ensure_default_agent_creates_description(monkeypatch):
     agent = await repo.ensure_default_agent()
 
     assert agent.description == DEFAULT_AGENT_DESCRIPTION
-    assert agent.config_json == {"context": {}}
+    assert agent.config_json == {"context": dict(DEFAULT_CHATBOT_PRESET.context)}
     assert db.added is agent
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(agent)
@@ -216,7 +217,7 @@ async def test_ensure_preset_creates_empty_config_subagent(monkeypatch):
     assert agent.backend_id == SUB_AGENT_BACKEND_ID
     assert agent.is_subagent is True
     assert agent.is_default is False
-    assert agent.config_json == {"context": {}}
+    assert agent.config_json == {"context": dict(DEFAULT_CHATBOT_PRESET.context)}
     assert agent.share_config == DEFAULT_SHARE_CONFIG
     assert agent.created_by == "system"
     assert db.added is agent
