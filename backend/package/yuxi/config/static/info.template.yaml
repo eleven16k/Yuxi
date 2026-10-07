@@ -1,26 +1,25 @@
-# 单位信息配置文件
-# 用于配置网站的基本信息、品牌信息等
+# 单位信息配置文件（欧选速麦产品品牌，2026-10-08 起）
 
 # 组织信息
 organization:
-  name: "语析"               # 完整组织名称
-  logo: "/favicon.svg"       # Logo文件路径（放在 web/public 目录下）
-  avatar: "/favicon.svg"      # 头像文件路径（放在 web/public 目录下）
-  login_bg: "/login-bg.jpg"  # 登录背景图片路径（放在 web/public 目录下）
+  name: "欧选速麦"               # 完整组织名称
+  logo: "/favicon.svg"           # Logo文件路径（放在 web/public 目录下）
+  avatar: "/favicon.svg"         # 头像文件路径（放在 web/public 目录下）
+  login_bg: "/login-bg.jpg"      # 登录背景图片路径（放在 web/public 目录下）
 
 # 项目信息
 branding:
-  name: "Yuxi"
-  title: "让团队知识可连接，让智能体可行动"     # 系统标题
-  subtitle: "知识库 × 知识图谱 × 智能体 Harness，开源且可私有部署"   # 副标题（subtitles 为空时使用）
+  name: "欧选速麦"
+  title: "OZON 卖家智能体"       # 系统标题
+  subtitle: "选品 · 1688 采集上架 · 订单经营 · 知识中心，一站式对话工作台"   # 副标题
   subtitles:
-    - "知识与智能体真正协同，每个回答都可溯源"
-    - "从回答问题到交付任务，工具与沙盒一站完成"
-    - "多租户、权限与模型治理，面向团队而非 Demo"
-    - "Docker Compose 一键部署，数据不出你的内网"
+    - "对话即操作：选品、上架、订单、定价全部在一个工作台完成"
+    - "写操作全量人工审批，操作回执幂等可追溯"
+    - "SPE 账号直接登录，数据与权限与你的店铺一致"
+    - "私有化部署，经营数据不出你的掌控"
 
 # 页脚信息
 footer:
-  copyright: "© 语析 2026 v{{YUXI_VERSION}}"
+  copyright: "© 欧选速麦 2026 v{{YUXI_VERSION}}"
   user_agreement_url: "/protocols/user-agreement.template.html"
   privacy_policy_url: "/protocols/privacy-policy.template.html"

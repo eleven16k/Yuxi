@@ -981,8 +981,8 @@ const steeringRequestIds = reactive(new Set())
 let sendCooldownTimer = null
 // 预设的打招呼文本
 const greetingMessages = [
-  '语析，析万物之语',
-  '语析，与知识对话',
+  '欧选速麦，你的 OZON 经营搭档',
+  '欧选速麦，对话即操作',
   '答案藏在知识里，我来找',
   '与知识对话，与答案相遇',
   '你负责提问，我负责寻找'

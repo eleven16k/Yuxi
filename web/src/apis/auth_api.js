@@ -62,7 +62,7 @@ async function login(credentials) {
 }
 
 /**
- * SPE 账号联邦登录：凭 SPE 用户名/密码换取 Yuxi 会话（登录即绑定 SPE 身份）
+ * SPE 账号联邦登录：凭 SPE 用户名/密码换取工作台会话（登录即绑定 SPE 身份）
  */
 async function speLogin(credentials) {
   const formData = new FormData()
