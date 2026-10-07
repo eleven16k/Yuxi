@@ -2,12 +2,16 @@ import asyncio
 import os
 import time
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 
 import httpx
 import requests
 
 from yuxi.models.providers.cache import model_cache
 from yuxi.utils import get_docker_safe_url, hashstr, logger
+
+# Minimax 原生协议的 db/query 模式标记（任务级隔离，见 MinimaxEmbedding）
+_minimax_query_mode: ContextVar[bool] = ContextVar("minimax_query_mode", default=False)
 
 EMBEDDING_RATE_LIMIT_MAX_RETRIES = 10
 EMBEDDING_TRANSIENT_MAX_RETRIES = 2
@@ -235,6 +239,41 @@ class OtherEmbedding(BaseEmbeddingModel):
                 logger.warning(f"超长 embedding 输入 index={idx}, len={len(text)}")
 
 
+class MinimaxEmbedding(OtherEmbedding):
+    """Minimax 原生 embeddings 协议（api.minimaxi.com/v1/embeddings）。
+
+    与 OpenAI 协议的差异：请求体用 ``{"model", "texts": [...], "type": "db"|"query"}``
+    而非 ``{"model", "input": [...]}``；响应取 ``vectors`` 而非 ``data[].embedding``。
+    入库与查询用 ContextVar 区分 type，任务级隔离、并发安全。
+    """
+
+    def build_payload(self, message: list[str] | str) -> dict:
+        texts = [message] if isinstance(message, str) else list(message)
+        embed_type = "query" if _minimax_query_mode.get() else "db"
+        return {"model": self.model, "texts": texts, "type": embed_type}
+
+    @staticmethod
+    def _extract_embeddings(result: dict) -> list[list[float]]:
+        vectors = result.get("vectors") if isinstance(result, dict) else None
+        if not isinstance(vectors, list) or not vectors:
+            raise ValueError(f"Minimax embedding failed: invalid response {str(result)[:200]}")
+        return vectors
+
+    def encode_queries(self, queries: list[str] | str) -> list[list[float]]:
+        token = _minimax_query_mode.set(True)
+        try:
+            return self.encode(queries)
+        finally:
+            _minimax_query_mode.reset(token)
+
+    async def aencode_queries(self, queries: list[str] | str) -> list[list[float]]:
+        token = _minimax_query_mode.set(True)
+        try:
+            return await self.aencode(queries)
+        finally:
+            _minimax_query_mode.reset(token)
+
+
 def get_embedding_model_info_by_id(model_id: str) -> dict:
     info = model_cache.get_model_info(model_id)
     if not info:
@@ -263,7 +302,8 @@ def select_embedding_model(model_id: str):
         raise ValueError(f"Model {model_id} is not an embedding model (type={info.model_type})")
 
     logger.info(f"Selecting embedding model: {model_id} (provider_type={info.provider_type})")
-    return OtherEmbedding(
+    embedding_cls = MinimaxEmbedding if getattr(info, "provider_id", "") == "minimax" else OtherEmbedding
+    return embedding_cls(
         model=info.model_id,
         base_url=info.base_url,
         api_key=info.api_key,
