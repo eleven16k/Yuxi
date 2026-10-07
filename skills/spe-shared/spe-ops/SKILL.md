@@ -2,6 +2,10 @@
 name: spe-ops
 tool_dependencies:
   - list_orders
+  - confirm_order
+  - ship_order
+  - cancel_order
+  - refund_order
   - list_products
   - inventory_health
   - low_stock
@@ -17,7 +21,7 @@ tool_dependencies:
   - restock_inventory
   - kb_upload
   - yuxi_research
-description: SPE 运营操作台——订单查询、库存与补货、动态定价、经营指标（店铺/仪表盘/月报/积分/热词）、知识库上传与深度研究。触发词：查订单、库存、补货、改价/调价、动态定价、经营数据、店铺指标、月报、积分明细、搜索热词、存入知识库、深度研究。选品与 1688 上架请用对应专项 skill。
+description: SPE 运营操作台——订单查询与状态操作（确认/发货/取消/退款，写需审批）、库存与补货、动态定价、经营指标（店铺/仪表盘/月报/积分/热词）、知识库上传与深度研究。触发词：查订单、库存、补货、改价/调价、动态定价、经营数据、店铺指标、月报、积分明细、搜索热词、存入知识库、深度研究。选品与 1688 上架请用对应专项 skill。
 ---
 # SPE 运营操作台
 

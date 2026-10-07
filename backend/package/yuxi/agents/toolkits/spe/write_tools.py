@@ -17,7 +17,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import Field, create_model
 
 from yuxi.agents.toolkits.registry import tool
-from yuxi.agents.toolkits.spe.catalog import SPE_BIZ_WRITE_TOOLS
+from yuxi.agents.toolkits.spe.catalog import SPE_BIZ_WRITE_TOOLS, SPE_ORDER_WRITE_TOOLS
 from yuxi.agents.toolkits.spe.client import SpeToolError, call_spe_biz_mutate
 from yuxi.agents.toolkits.spe.errors import format_spe_failure
 from yuxi.agents.toolkits.spe.receipts import write_receipts
@@ -365,6 +365,94 @@ def _confirm_envelope(receipt: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _text_arg(value: Any, label: str, *, max_len: int = 200) -> str:
+    """非空字符串校验（剥空白后 1..max_len 字符）。"""
+    text = str(value).strip() if value is not None else ""
+    if not text or len(text) > max_len:
+        raise SpeToolError("INVALID_ARGS", f"{label} 必填（{max_len} 字符内）")
+    return text
+
+
+# ---------- 订单状态机写工具（P1#06，对齐 SPE OrderController） ----------
+
+
+async def _exec_confirm_order(params: dict[str, Any], *, base_url: str, jwt: str, uid: str) -> dict[str, Any]:
+    order_id = params.get("orderId")
+    if not _int_arg(order_id):
+        raise SpeToolError("INVALID_ARGS", "confirm_order 参数 orderId 必填（整数 ≥1）")
+
+    async def _run() -> tuple[str, dict[str, Any]]:
+        await call_spe_biz_mutate(base_url=base_url, jwt=jwt, method="POST", path=f"/api/v1/orders/{order_id}/confirm")
+        return f"订单 #{order_id} 已确认", {"orderId": order_id, "action": "confirm"}
+
+    receipt = await write_receipts.exec_tracked(uid=uid, tool="confirm_order", args={"orderId": order_id}, run=_run)
+    return _confirm_envelope(receipt)
+
+
+async def _exec_ship_order(params: dict[str, Any], *, base_url: str, jwt: str, uid: str) -> dict[str, Any]:
+    order_id = params.get("orderId")
+    if not _int_arg(order_id):
+        raise SpeToolError("INVALID_ARGS", "ship_order 参数 orderId 必填（整数 ≥1）")
+    tracking = _text_arg(params.get("trackingNumber"), "ship_order 参数 trackingNumber", max_len=100)
+    carrier = _text_arg(params.get("carrier"), "ship_order 参数 carrier", max_len=50)
+
+    async def _run() -> tuple[str, dict[str, Any]]:
+        await call_spe_biz_mutate(
+            base_url=base_url,
+            jwt=jwt,
+            method="POST",
+            path=f"/api/v1/orders/{order_id}/ship",
+            query={"trackingNumber": tracking, "carrier": carrier},
+        )
+        return f"订单 #{order_id} 已发货（{carrier} {tracking}）", {
+            "orderId": order_id,
+            "action": "ship",
+            "carrier": carrier,
+            "trackingNumber": tracking,
+        }
+
+    receipt = await write_receipts.exec_tracked(
+        uid=uid, tool="ship_order", args={"orderId": order_id, "trackingNumber": tracking, "carrier": carrier}, run=_run
+    )
+    return _confirm_envelope(receipt)
+
+
+async def _exec_cancel_order(params: dict[str, Any], *, base_url: str, jwt: str, uid: str) -> dict[str, Any]:
+    order_id = params.get("orderId")
+    if not _int_arg(order_id):
+        raise SpeToolError("INVALID_ARGS", "cancel_order 参数 orderId 必填（整数 ≥1）")
+    reason = _text_arg(params.get("reason"), "cancel_order 参数 reason")
+
+    async def _run() -> tuple[str, dict[str, Any]]:
+        await call_spe_biz_mutate(
+            base_url=base_url, jwt=jwt, method="POST", path=f"/api/v1/orders/{order_id}/cancel", query={"reason": reason}
+        )
+        return f"订单 #{order_id} 已取消：{reason}", {"orderId": order_id, "action": "cancel", "reason": reason}
+
+    receipt = await write_receipts.exec_tracked(
+        uid=uid, tool="cancel_order", args={"orderId": order_id, "reason": reason}, run=_run
+    )
+    return _confirm_envelope(receipt)
+
+
+async def _exec_refund_order(params: dict[str, Any], *, base_url: str, jwt: str, uid: str) -> dict[str, Any]:
+    order_id = params.get("orderId")
+    if not _int_arg(order_id):
+        raise SpeToolError("INVALID_ARGS", "refund_order 参数 orderId 必填（整数 ≥1）")
+    reason = _text_arg(params.get("reason"), "refund_order 参数 reason")
+
+    async def _run() -> tuple[str, dict[str, Any]]:
+        await call_spe_biz_mutate(
+            base_url=base_url, jwt=jwt, method="POST", path=f"/api/v1/orders/{order_id}/refund", query={"reason": reason}
+        )
+        return f"订单 #{order_id} 已退款：{reason}", {"orderId": order_id, "action": "refund", "reason": reason}
+
+    receipt = await write_receipts.exec_tracked(
+        uid=uid, tool="refund_order", args={"orderId": order_id, "reason": reason}, run=_run
+    )
+    return _confirm_envelope(receipt)
+
+
 _EXECUTORS = {
     "preview_dynamic_price": _exec_preview_dynamic_price,
     "collect_products": _exec_collect_products,
@@ -376,6 +464,10 @@ _EXECUTORS = {
     "generate_variant_titles": _exec_generate_variant_titles,
     "host_source_images": _exec_host_source_images,
     "generate_ozon_images": _exec_generate_ozon_images,
+    "confirm_order": _exec_confirm_order,
+    "ship_order": _exec_ship_order,
+    "cancel_order": _exec_cancel_order,
+    "refund_order": _exec_refund_order,
 }
 
 
@@ -423,6 +515,6 @@ def _make_write_tool(spec):
 
 
 SPE_WRITE_TOOL_NAMES: list[str] = []
-for _spec in SPE_BIZ_WRITE_TOOLS:
+for _spec in [*SPE_BIZ_WRITE_TOOLS, *SPE_ORDER_WRITE_TOOLS]:
     globals()[_spec.name] = _make_write_tool(_spec)
     SPE_WRITE_TOOL_NAMES.append(_spec.name)

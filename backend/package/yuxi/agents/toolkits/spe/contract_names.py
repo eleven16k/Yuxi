@@ -9,6 +9,8 @@ SPE_WRITE_GATE_TOOLS: frozenset[str] = frozenset(
         "apply_dynamic_price",
         "apply_permission_preset",
         "build_rich_content",
+        "cancel_order",
+        "confirm_order",
         "generate_listing",
         "generate_ozon_images",
         "generate_variant_titles",
@@ -18,7 +20,9 @@ SPE_WRITE_GATE_TOOLS: frozenset[str] = frozenset(
         "kb_upload",
         "list_permissions",
         "restock_inventory",
+        "refund_order",
         "revoke_permission",
+        "ship_order",
         "yuxi_research",
     ]
 )

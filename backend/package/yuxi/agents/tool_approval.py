@@ -7,7 +7,7 @@ ToolApprovalMode = Literal["default", "always_trust"]
 
 DEFAULT_TOOL_APPROVAL_MODE: ToolApprovalMode = "default"
 TOOL_APPROVAL_MODES = frozenset({"default", "always_trust"})
-# SPE 闸门写工具 14 名。此处内联字面量而非导入 spe 包：context 在 agents
+# SPE 闸门写工具 18 名。此处内联字面量而非导入 spe 包：context 在 agents
 # 包初始化早期导入本模块，经 spe/__init__ 拉起 services 会成环；与
 # yuxi.agents.toolkits.spe.contract_names 的单一来源由对账测试守护恒等。
 _SPE_WRITE_GATE_TOOLS = frozenset({
@@ -15,6 +15,7 @@ _SPE_WRITE_GATE_TOOLS = frozenset({
     "generate_variant_titles", "host_source_images", "generate_ozon_images", "generate_listing",
     "kb_upload", "yuxi_research", "grant_permission", "revoke_permission",
     "apply_permission_preset", "list_permissions",
+    "confirm_order", "ship_order", "cancel_order", "refund_order",
 })
 # 默认审批模式下需要拦截或对子 Agent 隐藏的敏感 backend 工具；
 # SPE 闸门写扩员（T04：无 when 谓词——任何参数组合都需确认）。

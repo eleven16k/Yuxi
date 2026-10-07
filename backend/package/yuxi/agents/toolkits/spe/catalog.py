@@ -537,3 +537,52 @@ SPE_INTERNAL_WRITE_TOOLS: list[BizReadSpec] = [
         ],
     ),
 ]
+
+# 订单状态机写工具（P1#06 扩展面：冻结快照 47 工具之外，ozon-agent 自有规格）。
+# 对齐 SPE OrderController：POST /api/v1/orders/{id}/{confirm|ship|cancel|refund}。
+SPE_ORDER_WRITE_TOOLS: list[BizReadSpec] = [
+    BizReadSpec(
+        name="confirm_order",
+        description="确认待处理订单；写回执「订单 #<id> 已确认」",
+        path="",
+        kind="biz_write",
+        card="confirm-result",
+        params=[
+            {"name": "orderId", "type": "integer", "required": True, "description": "订单 ID（正整数）"},
+        ],
+    ),
+    BizReadSpec(
+        name="ship_order",
+        description="订单发货（必填运单号与承运商）；写回执「订单 #<id> 已发货（<承运商> <运单号>）」",
+        path="",
+        kind="biz_write",
+        card="confirm-result",
+        params=[
+            {"name": "orderId", "type": "integer", "required": True, "description": "订单 ID（正整数）"},
+            {"name": "trackingNumber", "type": "string", "required": True, "description": "运单号（1-100 字符）"},
+            {"name": "carrier", "type": "string", "required": True, "description": "承运商（1-50 字符，如 CDEK/Boxberry）"},
+        ],
+    ),
+    BizReadSpec(
+        name="cancel_order",
+        description="取消订单（必填原因）；写回执「订单 #<id> 已取消：<原因>」",
+        path="",
+        kind="biz_write",
+        card="confirm-result",
+        params=[
+            {"name": "orderId", "type": "integer", "required": True, "description": "订单 ID（正整数）"},
+            {"name": "reason", "type": "string", "required": True, "description": "取消原因（1-200 字符）"},
+        ],
+    ),
+    BizReadSpec(
+        name="refund_order",
+        description="处理订单退款（必填原因）；写回执「订单 #<id> 已退款：<原因>」",
+        path="",
+        kind="biz_write",
+        card="confirm-result",
+        params=[
+            {"name": "orderId", "type": "integer", "required": True, "description": "订单 ID（正整数）"},
+            {"name": "reason", "type": "string", "required": True, "description": "退款原因（1-200 字符）"},
+        ],
+    ),
+]

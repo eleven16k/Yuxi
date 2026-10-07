@@ -68,9 +68,14 @@ def test_approval_inline_names_match_contract_source() -> None:
 
 
 def test_gate_names_match_snapshot() -> None:
+    """冻结快照闸（14）⊆ 全量闸；差集 = 订单写工具扩展面（P1#06，快照外）。"""
     snapshot = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
     gated = {t["name"] for t in snapshot["tools"] if t["write_gate"]}
-    assert SPE_WRITE_GATE_TOOLS == gated and len(gated) == 14
+    from yuxi.agents.toolkits.spe.catalog import SPE_ORDER_WRITE_TOOLS
+
+    extension = {spec.name for spec in SPE_ORDER_WRITE_TOOLS}
+    assert gated <= SPE_WRITE_GATE_TOOLS and len(gated) == 14
+    assert SPE_WRITE_GATE_TOOLS - gated == extension
 
 
 # ---------- 回执（C-26） ----------
@@ -290,3 +295,75 @@ def test_approval_always_trust_returns_none() -> None:
 
 def test_sensitive_set_hides_write_tools_from_subagents() -> None:
     assert SPE_WRITE_GATE_TOOLS <= SENSITIVE_BACKEND_TOOLS
+
+
+# ---------- 订单状态机写工具（P1#06，扩展面：冻结快照之外） ----------
+
+
+def test_order_write_tools_registered_and_gated() -> None:
+    """4 个订单写工具已注册、入审批闸、且不在冻结快照内（扩展面边界）。"""
+    import json
+    from pathlib import Path
+
+    from yuxi.agents.toolkits.spe.contract_names import SPE_WRITE_GATE_TOOLS
+
+    names = ["confirm_order", "ship_order", "cancel_order", "refund_order"]
+    for name in names:
+        tool_obj = getattr(write_tools, name, None)
+        assert tool_obj is not None, f"{name} 未注册"
+    for name in names:
+        assert name in SPE_WRITE_GATE_TOOLS, f"{name} 不在审批闸"
+
+    snapshot = json.loads(
+        (Path(__file__).parent / "fixtures" / "spe_contract_snapshot.json").read_text()
+    )
+    frozen = {t["name"] for t in snapshot["tools"]}
+    for name in names:
+        assert name not in frozen, f"{name} 不应出现在冻结快照（扩展面）"
+
+
+async def test_confirm_order_write_and_duplicate(backend) -> None:
+    backend.routes["/api/v1/orders/5/confirm"] = None
+    first = await write_tools.confirm_order.coroutine(runtime=_runtime(), orderId=5)
+    assert first["ui"] == "confirm-result"
+    assert "订单 #5" in first["data"]["summary"] and "确认" in first["data"]["summary"]
+    assert first["data"]["operationId"].startswith("op_confirm_order_")
+
+    second = await write_tools.confirm_order.coroutine(runtime=_runtime(), orderId=5)
+    assert len(backend.calls) == 1
+    assert second["data"]["duplicate"] is True
+
+
+async def test_ship_order_query_params(backend) -> None:
+    backend.routes["/api/v1/orders/7/ship"] = None
+    result = await write_tools.ship_order.coroutine(
+        runtime=_runtime(), orderId=7, trackingNumber="RF123456789", carrier="CDEK"
+    )
+    call = backend.calls[0]
+    assert call["path"] == "/api/v1/orders/7/ship"
+    assert call["query"] == {"trackingNumber": "RF123456789", "carrier": "CDEK"}
+    assert "发货" in result["data"]["summary"]
+
+
+async def test_cancel_and_refund_order(backend) -> None:
+    backend.routes["/api/v1/orders/8/cancel"] = None
+    backend.routes["/api/v1/orders/9/refund"] = None
+    cancel = await write_tools.cancel_order.coroutine(runtime=_runtime(), orderId=8, reason="买家申请")
+    refund = await write_tools.refund_order.coroutine(runtime=_runtime(), orderId=9, reason="缺货")
+    assert "取消" in cancel["data"]["summary"]
+    assert "退款" in refund["data"]["summary"]
+    assert cancel["data"]["details"]["reason"] == "买家申请"
+
+
+async def test_order_write_validation_errors(backend) -> None:
+    cases = [
+        (write_tools.confirm_order, {"orderId": 0}),
+        (write_tools.ship_order, {"orderId": 7, "trackingNumber": "", "carrier": "CDEK"}),
+        (write_tools.cancel_order, {"orderId": 8, "reason": ""}),
+        (write_tools.refund_order, {"orderId": 9, "reason": "r" * 201}),
+    ]
+    for tool_obj, kwargs in cases:
+        with pytest.raises(ToolException) as info:
+            await tool_obj.coroutine(runtime=_runtime(), **kwargs)
+        assert "INVALID_ARGS" in str(info.value), tool_obj.name
+    assert backend.calls == []
