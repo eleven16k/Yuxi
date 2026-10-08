@@ -212,6 +212,13 @@ async def login_with_spe(
     spe_username = spe_profile.get("username") or username.strip()
     tenant_id = spe_profile.get("tenantId")
     uid = spe_uid(spe_username)
+    if uid == SPE_TENANT_KB_CREATOR:
+        # 终审修复：spe_system 是系统预建租户库的拥有者身份——若放行该用户名，
+        # 其 created_by 拥有者分支将命中所有系统预建租户库（越权接管）。
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该用户名为系统保留字，请联系平台管理员",
+        )
     department_id = await _resolve_tenant_department_id(db, tenant_id)
     user = await db.scalar(select(User).where(User.uid == uid, User.is_deleted == 0))
     if user is None:

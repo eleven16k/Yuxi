@@ -179,6 +179,31 @@ def _require_upload_role(kb_id: str | None, current_user: User) -> None:
         raise HTTPException(status_code=403, detail="请指定目标知识库后再上传")
 
 
+def _clamp_share_config_for_non_platform_admin(payload: dict, current_user: User) -> None:
+    """非平台管理员不得把知识库共享范围放大到 global 或本部门之外（spec §3/§8、终审修复）。
+
+    global 档 = 官方域（全体租户可见 + is_official 配额豁免），仅平台管理员可设置；
+    department 档不得包含本租户之外的部门 ID，防止跨租户渗透。
+    """
+    share_config = payload.get("share_config")
+    if not isinstance(share_config, dict) or current_user.role in ADMIN_ROLES:
+        return
+    for scope_key in ("read_scope", "manage_scope"):
+        scope = share_config.get(scope_key)
+        if not isinstance(scope, dict):
+            continue
+        if scope.get("access_level") == "global":
+            raise HTTPException(status_code=403, detail="全局共享仅平台管理员可设置")
+        if scope.get("access_level") == "department":
+            for department_id in scope.get("department_ids") or []:
+                try:
+                    beyond_own_tenant = int(department_id) != current_user.department_id
+                except (TypeError, ValueError):
+                    beyond_own_tenant = True  # 非法部门标识按越权处理（fail-closed）
+                if beyond_own_tenant:
+                    raise HTTPException(status_code=403, detail="部门共享范围不能超出本租户")
+
+
 async def _ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
     db_info, supports_documents = await knowledge_base.get_database_document_support(kb_id)
     if not db_info:
@@ -426,6 +451,7 @@ async def update_database_info(
         f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
         f"additional_params={data.additional_params}, share_config={data.share_config}"
     )
+    _clamp_share_config_for_non_platform_admin(data.model_dump(), current_user)
     try:
         update_llm_model_spec = "llm_model_spec" in data.model_fields_set
 

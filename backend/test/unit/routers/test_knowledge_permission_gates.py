@@ -78,3 +78,80 @@ def test_upload_route_without_kb_id_rejects_non_admin():
 
     assert response.status_code == 403
     assert response.json()["detail"] == "请指定目标知识库后再上传"
+
+
+# ---------- share_config 越权放大钳制（终审修复：官方域平台独家维护 + 跨租户隔离） ----------
+
+_GLOBAL_SCOPE = {"access_level": "global", "department_ids": [], "user_uids": []}
+
+
+def _share_payload(read_scope, manage_scope=None):
+    return {"share_config": {"version": 2, "read_scope": read_scope, "manage_scope": manage_scope}}
+
+
+def test_clamp_rejects_tenant_admin_global():
+    with pytest.raises(HTTPException) as info:
+        kr._clamp_share_config_for_non_platform_admin(
+            _share_payload(_GLOBAL_SCOPE), _user("tenant_admin", department_id=7)
+        )
+    assert info.value.status_code == 403
+    assert "全局共享" in info.value.detail
+
+
+def test_clamp_rejects_foreign_department():
+    payload = _share_payload({"access_level": "department", "department_ids": [7, 9], "user_uids": []})
+    with pytest.raises(HTTPException) as info:
+        kr._clamp_share_config_for_non_platform_admin(payload, _user("tenant_admin", department_id=7))
+    assert info.value.status_code == 403
+    assert "超出本租户" in info.value.detail
+
+
+def test_clamp_rejects_manage_scope_global_too():
+    """manage_scope 单独放大同样被钳制（is_official 只看 read_scope，但 manage 放大仍越权）。"""
+    payload = _share_payload(
+        {"access_level": "department", "department_ids": [7], "user_uids": []}, _GLOBAL_SCOPE
+    )
+    with pytest.raises(HTTPException) as info:
+        kr._clamp_share_config_for_non_platform_admin(payload, _user("tenant_admin", department_id=7))
+    assert info.value.status_code == 403
+
+
+def test_clamp_allows_own_department_and_user_scope():
+    own_dept = _share_payload({"access_level": "department", "department_ids": [7], "user_uids": []})
+    kr._clamp_share_config_for_non_platform_admin(own_dept, _user("tenant_admin", department_id=7))  # 不抛
+    user_scope = _share_payload(
+        {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+        {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+    )
+    kr._clamp_share_config_for_non_platform_admin(user_scope, _user("user", department_id=7))  # 不抛
+    kr._clamp_share_config_for_non_platform_admin({"share_config": None}, _user("user", department_id=7))  # 未携带不拦
+
+
+def test_clamp_allows_platform_admin_global():
+    for role in ("admin", "superadmin"):
+        kr._clamp_share_config_for_non_platform_admin(
+            _share_payload(_GLOBAL_SCOPE), _user(role, department_id=7)
+        )  # 不抛
+
+
+def test_update_route_clamps_tenant_admin_before_manager(monkeypatch):
+    """路由级接线：tenant_admin 改 global 档在进入 manager 更新前被 403 拒绝。"""
+    app = FastAPI()
+    app.include_router(kr.knowledge)
+
+    async def fake_manage():
+        return _user("tenant_admin", department_id=7)
+
+    async def fail_update(*args, **kwargs):
+        raise AssertionError("钳制应先于 manager 更新执行")
+
+    app.dependency_overrides[kp.require_knowledge_base_manage] = fake_manage
+    monkeypatch.setattr(kr.knowledge_base, "update_database", fail_update)
+
+    response = TestClient(app).put(
+        "/knowledge/databases/kb_t",
+        json={"name": "n", "description": "d", "share_config": _share_payload(_GLOBAL_SCOPE)["share_config"]},
+    )
+
+    assert response.status_code == 403
+    assert "全局共享" in response.json()["detail"]

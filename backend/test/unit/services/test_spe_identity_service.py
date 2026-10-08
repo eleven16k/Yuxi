@@ -129,6 +129,17 @@ async def test_username_collision_gets_suffix(wiring) -> None:
     assert user.uid == "spe_张文杰" and user.username == "张文杰(SPE)"
 
 
+async def test_reserved_username_system_rejected(wiring) -> None:
+    """终审修复：SPE 用户名恰为 system → uid=spe_system 撞系统预建者身份，403 拒绝。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(username="system"))
+    db = _FakeScalarSession([])
+    with pytest.raises(HTTPException) as info:
+        await svc.login_with_spe(username="system", password="pw", db=db)
+    assert info.value.status_code == 403
+    assert "系统保留字" in info.value.detail
+    assert db.added == []  # 守卫先于查建用户与开户
+
+
 async def test_unconfigured_spe_fails_closed(wiring) -> None:
     wiring.monkeypatch.setattr(svc, "spe_agent_opts", _FakeOpts(base_url=None))
     with pytest.raises(HTTPException) as info:

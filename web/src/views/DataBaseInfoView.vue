@@ -399,6 +399,7 @@
                     v-model="editShareConfig"
                     :auto-select-user-dept="true"
                     :require-read-scope="true"
+                    :allowed-access-levels="shareAllowedAccessLevels"
                   />
                 </a-form-item-rest>
               </a-form-item>
@@ -459,6 +460,7 @@ import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import { databaseApi } from '@/apis/knowledge_api'
 import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
+import { useUserStore } from '@/stores/user'
 import { useChunkPresetOptions } from '@/composables/useChunkPresetOptions'
 import { DEFAULT_CHUNK_PRESET_ID } from '@/utils/chunkUtils'
 import { kbUtils } from '@/utils/kb_utils'
@@ -476,6 +478,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
 const taskerStore = useTaskerStore()
+const userStore = useUserStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -936,6 +939,10 @@ const fileList = computed(() => {
 })
 
 const canEditShareConfig = computed(() => canManageDatabase.value)
+// 官方域（global 档）平台独家维护：非平台管理员仅可选部门/指定人档（终审修复，与后端钳制一致）
+const shareAllowedAccessLevels = computed(() =>
+  userStore.isAdmin ? ['global', 'department', 'user'] : ['department', 'user']
+)
 
 const shareConfigDisplay = computed(() => {
   const shareConfig = database.value?.share_config || {}
