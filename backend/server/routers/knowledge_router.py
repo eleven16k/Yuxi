@@ -166,6 +166,14 @@ async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: U
         await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
 
 
+def _require_upload_role(kb_id: str | None, current_user: User) -> None:
+    """无 kb_id 的直传（不入库）仅平台管理员可用（spec 2026-10-08 §7）；带 kb_id 走资源权限门。"""
+    if kb_id:
+        return
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="请指定目标知识库后再上传")
+
+
 async def _ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
     db_info, supports_documents = await knowledge_base.get_database_document_support(kb_id)
     if not db_info:
@@ -1644,11 +1652,13 @@ async def import_workspace_files(
 async def upload_file(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ):
     """上传文件"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
+
+    _require_upload_role(kb_id, current_user)
 
     if kb_id:
         await _require_manage_permission_if_kb_id(kb_id, current_user)
@@ -1677,14 +1687,14 @@ async def upload_file(
 
 
 @knowledge.get("/files/supported-types")
-async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
+async def get_supported_file_types(current_user: User = Depends(get_required_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
 
 
 @knowledge.post("/files/markdown")
-async def mark_it_down(file: UploadFile = File(...), current_user: User = Depends(get_admin_user)):
-    """调用统一 Parser 将文件解析为 markdown，需要管理员权限"""
+async def mark_it_down(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
+    """调用统一 Parser 将文件解析为 markdown"""
     import tempfile
 
     if not file.filename:

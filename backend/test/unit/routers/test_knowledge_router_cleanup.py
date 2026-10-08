@@ -108,7 +108,9 @@ async def test_upload_file_rejects_jsonl_uploads():
     upload = UploadFile(filename="dataset.jsonl", file=BytesIO(b'{"query":"hello"}\n'))
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1"))
+        await knowledge_router.upload_file(
+            upload, kb_id=None, current_user=SimpleNamespace(uid="user_1", role="admin")
+        )
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Unsupported file type: .jsonl"

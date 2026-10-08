@@ -56,16 +56,27 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
     assert exc_info.value.status_code == 403
 
 
-def test_evaluation_routes_require_admin_role():
+def test_evaluation_dataset_routes_gate_on_resource_permission(monkeypatch):
     app = FastAPI()
     app.include_router(knowledge_eval_router.evaluation)
 
     async def fake_required_user():
         return SimpleNamespace(uid="user-1", role="user", department_id=1)
 
+    async def fake_get_database_info(_kb_id):
+        return {
+            "created_by": "owner",
+            "share_config": {
+                "version": 2,
+                "read_scope": {"access_level": "department", "department_ids": [999]},
+                "manage_scope": None,
+            },
+        }
+
+    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_database_info", fake_get_database_info)
     app.dependency_overrides[get_required_user] = fake_required_user
 
     response = TestClient(app).get("/evaluation/databases/kb-1/datasets")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "需要管理员权限"
+    assert response.json()["detail"] == "无权操作该知识库"
