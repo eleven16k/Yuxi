@@ -105,6 +105,13 @@ def upload_env(monkeypatch):
             "size": len(file_bytes),
         }
 
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    from yuxi.services import knowledge_quota_service as quota_svc
+
+    async def fake_quota(kb_id, **kwargs):
+        return None
+
+    monkeypatch.setattr(quota_svc, "ensure_tenant_kb_quota", fake_quota)
     monkeypatch.setattr(knowledge_file_service, "upload_knowledge_file_bytes", fake_upload)
     monkeypatch.setattr(task_service, "tasker", tasker)
     monkeypatch.setattr(internal_write, "_kb", lambda: fake_kb)

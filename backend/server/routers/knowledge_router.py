@@ -776,6 +776,13 @@ async def add_uploaded_documents(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
+
+    try:
+        await ensure_tenant_kb_quota(kb_id, incoming_count=len(payload.items))
+    except TenantKBQuotaExceededError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
+
     logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
     await _ensure_database_supports_documents(kb_id, "文档添加")
 
@@ -1673,6 +1680,14 @@ async def upload_file(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if kb_id:
+        from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
+
+        try:
+            await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=len(file_bytes))
+        except TenantKBQuotaExceededError as e:
+            raise HTTPException(status_code=413, detail=str(e)) from e
 
     try:
         uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=file.filename, file_bytes=file_bytes)

@@ -103,6 +103,13 @@ async def _kb_upload_impl(runtime: ToolRuntime, **params: Any) -> dict[str, Any]
     if not target.get("can_manage"):
         raise ToolException(format_spe_failure("BIZ_FORBIDDEN", f"对知识库 '{target['kb_name']}' 没有管理权限"))
 
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
+
+    try:
+        await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=len(content.encode("utf-8")))
+    except TenantKBQuotaExceededError as e:
+        raise ToolException(format_spe_failure("BIZ_FORBIDDEN", str(e))) from e
+
     content_hash = _content_hash16(content)
     # opKey 用内容哈希前 16 位而非全文；kbId 必进键（同内容异库是不同操作）
     receipt_args = {"kbId": kb_id, "filename": filename, "contentHash": content_hash}

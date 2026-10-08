@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile
 
 from server.routers import knowledge_router
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.services import knowledge_task_service
+from yuxi.services import knowledge_quota_service, knowledge_task_service
 from yuxi.services.task_registry import get_task_definition
 
 pytestmark = pytest.mark.asyncio
@@ -575,11 +575,16 @@ async def test_add_uploaded_documents_rejects_invalid_payload(monkeypatch, paylo
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         return None
 
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    async def fake_ensure_tenant_kb_quota(kb_id: str, **kwargs) -> None:
+        return None
+
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", fake_ensure_tenant_kb_quota)
 
     with pytest.raises(HTTPException) as exc_info:
         await knowledge_router.add_uploaded_documents(
@@ -609,11 +614,16 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
     async def fail_enqueue(*_args, **_kwargs):
         raise AssertionError("documents/add must not enqueue tasker work")
 
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    async def fake_ensure_tenant_kb_quota(kb_id: str, **kwargs) -> None:
+        return None
+
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", fake_ensure_tenant_kb_quota)
     monkeypatch.setattr(knowledge_router.knowledge_base, "add_file_record", fake_add_file_record)
     monkeypatch.setattr(knowledge_router.tasker, "enqueue", fail_enqueue)
 
