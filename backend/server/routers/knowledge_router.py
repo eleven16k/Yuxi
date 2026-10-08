@@ -36,6 +36,7 @@ from yuxi.permissions import (
     ResourcePermission,
     resolve_knowledge_base_permission,
 )
+from yuxi.repositories.agent_repository import ADMIN_ROLES
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import tasker
@@ -172,8 +173,6 @@ async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: U
 
 def _require_upload_role(kb_id: str | None, current_user: User) -> None:
     """无 kb_id 的直传（不入库）仅平台管理员可用（spec 2026-10-08 §7）；带 kb_id 走资源权限门。"""
-    from yuxi.repositories.agent_repository import ADMIN_ROLES
-
     if kb_id:
         return
     if current_user.role not in ADMIN_ROLES:

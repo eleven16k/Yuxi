@@ -27,6 +27,8 @@ from yuxi.utils.auth_utils import AuthUtils
 SPE_USER_UID_PREFIX = "spe_"
 SPE_DEPARTMENT_NAME = "SPE 外部用户"
 SPE_TENANT_DEPARTMENT_PREFIX = "SPE租户-"
+# 租户库创建者系统身份：避免首登成员经 created_by 拥有者分支获得越角色写权（spec §6.1）
+SPE_TENANT_KB_CREATOR = "spe_system"
 
 
 def map_spe_role_to_yuxi(spe_role: Any) -> str:
@@ -108,7 +110,7 @@ async def _ensure_tenant_kb(*, uid: str, department_id: int, tenant_id: Any) -> 
                     "read_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
                     "manage_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
                 },
-                created_by=uid,
+                created_by=SPE_TENANT_KB_CREATOR,
                 created_by_department_id=department_id,
             )
         except KBNameConflictError:

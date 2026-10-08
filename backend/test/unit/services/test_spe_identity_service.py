@@ -236,6 +236,8 @@ async def test_ensure_tenant_kb_creates_department_scoped_kb(monkeypatch):
     assert len(created) == 1
     assert created[0].get("share_config")["read_scope"]["department_ids"] == [7]
     assert created[0].get("share_config")["manage_scope"]["department_ids"] == [7]
+    # created_by 系统化（spec §6.1 修订）：首登成员不得经 owner 分支获越角色写权
+    assert created[0]["created_by"] == "spe_system"
 
 
 async def test_ensure_tenant_kb_name_conflict_tolerated(monkeypatch):

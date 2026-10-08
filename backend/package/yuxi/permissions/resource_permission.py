@@ -183,8 +183,10 @@ def resolve_resource_permission(
     config = normalize_permission_config(
         raw_share_config,
     )
+    ceiling = policy.role_ceiling.get(_value(user, "role"), ResourcePermission.READ)
     if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
-        return ResourcePermission.MANAGE
+        # 拥有者也受角色上限约束（spec 2026-10-08 §5.1：预建者受本人上限约束不会越界）
+        return _minimum_permission(ResourcePermission.MANAGE, ceiling)
     elif scope_matches(user, config["manage_scope"]) and (
         config["read_scope"] is None or scope_matches(user, config["read_scope"])
     ):
@@ -194,7 +196,6 @@ def resolve_resource_permission(
     else:
         granted = ResourcePermission.NONE
 
-    ceiling = policy.role_ceiling.get(_value(user, "role"), ResourcePermission.READ)
     return _minimum_permission(granted, ceiling)
 
 

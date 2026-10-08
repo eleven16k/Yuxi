@@ -101,11 +101,32 @@ def test_user_agent_and_skill_scope_preserves_user_management():
 
 
 def test_knowledge_base_owner_and_superadmin_can_manage():
+    """owner 分支也过角色上限（spec 2026-10-08 §5.1 修订）：user owner 只 READ，
+    tenant_admin/admin owner MANAGE，superadmin 恒 MANAGE。"""
     resource = _resource(created_by="owner", share_config={"version": 2})
 
-    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.READ
+    assert (
+        resolve_knowledge_base_permission(_user(uid="owner", role="tenant_admin"), resource)
+        == ResourcePermission.MANAGE
+    )
     assert resolve_knowledge_base_permission(_user(uid="owner", role="admin"), resource) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+
+
+def test_kb_owner_ceiling_overlaps_department_manage_scope():
+    """重叠格：user-owner × 本租户部门档库（manage_scope 含 owner 所在部门）→ READ。
+
+    拥有者早退发生在 ceiling 应用之前会被此格穿透成 MANAGE（评审 Issue 1a）；
+    修复后 owner 分支返回 min(MANAGE, ceiling)=READ（spec §5.1）。"""
+    kb = _matrix_kb(_DEPT1, manage_scope=_DEPT1, created_by="u1")
+    assert resolve_knowledge_base_permission(_matrix_user("user", uid="u1", department_id=1), kb) == (
+        ResourcePermission.READ
+    )
+    # 对照：tenant_admin owner 在同格仍 MANAGE（ceiling 不削）
+    assert resolve_knowledge_base_permission(
+        _matrix_user("tenant_admin", uid="u1", department_id=1), kb
+    ) == ResourcePermission.MANAGE
 
 
 def test_global_knowledge_base_share_remains_manage_for_admin():
