@@ -47,3 +47,18 @@ SPE WebAgent 迁移后的默认身份模型是两层分离：Yuxi 平台账号�
 `superadmin` 改为 `user`。理由：对外部商业租户开放平台超管是提权隐患，
 平台运营改用本地 superadmin 账号。既有联邦用户在下次登录时由角色同步
 逻辑自动降级，无需数据迁移。
+
+## 修订（2026-10-08）：角色映射与租户部门
+
+依据 `docs/superpowers/specs/2026-10-08-knowledge-center-tenant-division-design.md`（octop-spe 仓库）：
+
+1. **SPE ADMIN → `tenant_admin`（原 admin）**：Yuxi admin 意味着平台管理界面与任意建库权，
+   对租户管理员权力过界；tenant_admin 仅在本租户部门库上具备 MANAGE 上限，不入 isAdmin 集合
+   （agent/skill 策略同步注册 MANAGE 上限，避免对成员的权限倒挂）。存量 SPE 来源 admin 下次登录自动降级。
+2. **部门 = SPE 租户**：登录按 `tenantId` get-or-create 部门（`SPE租户-{tenantId}`），
+   用户 department_id 每次登录同步；tenantId 缺失回退旧「SPE 外部用户」大部门（0 视为显式租户值）。
+3. **停建个人库**：开户不再预建 `read_scope: user` 个人库，改为每租户预建部门档共享库
+   （`created_by=spe_system` 系统身份，供给在登录事务 commit 之后由 `ensure_tenant_provisioning` 执行）；
+   存量空库由 `scripts/cleanup_spe_personal_kbs.py` 清理、非空库登录时懒改档。
+4. **权限模型修订**：`resolve_resource_permission` 的 `created_by` 拥有者分支改为
+   `min(MANAGE, 角色上限)`——拥有者不再越角色（spec §5.1 矩阵）。

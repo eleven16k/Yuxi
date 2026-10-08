@@ -133,3 +133,20 @@ Agent 的 `knowledges` 只能缩小用户已有权限。子智能体使用自己
 - [外部知识库 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_external_router.py)
 
 修改状态、权限、存储或 Agent 工具链路时，至少运行对应 unit 和真实 HTTP integration；涉及外部存储时，从 PostgreSQL、MinIO、Milvus 或 Neo4j 回读最终结果。
+
+## 租户边界语义（2026-10-08）
+
+- 部门 = SPE 租户：联邦登录按 tenantId 自动建部门并同步用户归属；「租户库」即
+  `read_scope.department_ids == [本部门]` 精确单部门匹配的知识库（系统身份 `spe_system` 预建，
+  供给在登录事务 commit 后执行）。
+- 权限矩阵：superadmin 全库 MANAGE；tenant_admin 对本租户库 MANAGE（角色上限）、
+  官方库 READ、他租户库 NONE；普通成员全库封顶 READ；**拥有者（created_by）同样受角色上限约束**。
+- 官方库 = `read_scope.access_level == "global"`（派生唯一出处 `is_official_share_config`），
+  平台 superadmin 经 /extensions 维护，全员只读；租户知识中心前端入口为 /knowledge
+  （双区：官方知识 / 我的租户知识库；详情页管理按钮由后端 can_manage 驱动，
+  数据链路走资源权限门端点，前端 admin 预检已移除）。
+- 兜底配额：`spe_kb_quota_opts`（文件数/总字节，0 不限制，官方库豁免）。权威判定在
+  `KnowledgeBase.add_file_record` 扼制点（stat 后真实 size、写入前，覆盖全部登记路径）；
+  边缘快速失败在文件上传与文档登记入口；对话工具 kb_upload 同链生效。
+- HTTP 门禁：带 kb_id 的知识库端点一律「登录 + 资源权限」（`require_knowledge_base_read/manage`）；
+  无 kb_id 直传与建库等平台管理端点保持 admin-only。
