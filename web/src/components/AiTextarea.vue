@@ -7,7 +7,8 @@
       :rows="rows"
       :auto-size="autoSize"
     />
-    <a-tooltip v-if="name" title="使用 AI 生成或优化描述">
+    <!-- AI 生成描述依赖 admin-only 接口（/generate-description），仅平台管理员可见 -->
+    <a-tooltip v-if="name && userStore.isAdmin" title="使用 AI 生成或优化描述">
       <a-button
         class="ai-btn"
         type="text"
@@ -29,6 +30,7 @@ import { ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { databaseApi } from '@/apis/knowledge_api'
 import { WandSparkles } from '@lucide/vue'
+import { useUserStore } from '@/stores/user'
 
 const props = defineProps({
   modelValue: {
@@ -63,6 +65,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue'])
 
+const userStore = useUserStore()
 const loading = ref(false)
 
 const generateDescription = async () => {
