@@ -74,9 +74,15 @@ class _FakeCredRepo:
 @pytest.fixture
 def wiring(monkeypatch):
     cred = _FakeCredRepo()
+
+    async def _noop_kb_provision(**kwargs) -> None:
+        return None  # 默认桩：登录测试不构造真实 KB runtime/不触 DB（密闭化）
+
     monkeypatch.setattr(svc, "spe_agent_opts", _FakeOpts())
     monkeypatch.setattr(svc, "spe_credential_repository", cred)
     monkeypatch.setattr(svc, "call_spe_credit_balance", _credit_ok())
+    monkeypatch.setattr(svc, "_ensure_tenant_kb", _noop_kb_provision)
+    monkeypatch.setattr(svc, "_rescope_personal_kbs", _noop_kb_provision)
     return SimpleNamespace(cred=cred, monkeypatch=monkeypatch)
 
 
