@@ -283,7 +283,8 @@ async def test_rescope_personal_kbs_only_own_nonempty(monkeypatch):
     assert config["read_scope"]["department_ids"] == [7] and config["manage_scope"]["department_ids"] == [7]
 
 
-async def test_login_triggers_tenant_kb_provision(wiring) -> None:
+async def test_ensure_tenant_provisioning_gates(monkeypatch) -> None:
+    """供给入口门控（路由 commit 后调用）：tenantId 非空且 department_id 就绪才触发。"""
     calls = []
 
     async def fake_ensure(**kw):
@@ -292,16 +293,35 @@ async def test_login_triggers_tenant_kb_provision(wiring) -> None:
     async def fake_rescope(**kw):
         calls.append(("rescope", kw["department_id"]))
 
+    monkeypatch.setattr(svc, "_ensure_tenant_kb", fake_ensure)
+    monkeypatch.setattr(svc, "_rescope_personal_kbs", fake_rescope)
+
+    await svc.ensure_tenant_provisioning(uid="spe_alice", department_id=101, tenant_id=5)
+    assert calls == [("ensure", 101, 5), ("rescope", 101)]
+
+    for tenant_id in (None, "  "):  # tenantId 缺失/空白 → 无租户语义，跳过
+        calls.clear()
+        await svc.ensure_tenant_provisioning(uid="spe_alice", department_id=101, tenant_id=tenant_id)
+        assert calls == []
+
+    calls.clear()  # 无部门（未就绪）→ 跳过
+    await svc.ensure_tenant_provisioning(uid="spe_alice", department_id=None, tenant_id=5)
+    assert calls == []
+
+
+async def test_login_with_spe_no_longer_provisions_kbs(wiring) -> None:
+    """登录事务内不做租户供给——供给已后移到路由 commit 之后（评审修复 Issue 1）。"""
+    calls = []
+
+    async def record_ensure(**kw):
+        calls.append("ensure")
+
+    async def record_rescope(**kw):
+        calls.append("rescope")
+
     wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
-    wiring.monkeypatch.setattr(svc, "_ensure_tenant_kb", fake_ensure)
-    wiring.monkeypatch.setattr(svc, "_rescope_personal_kbs", fake_rescope)
+    wiring.monkeypatch.setattr(svc, "_ensure_tenant_kb", record_ensure)
+    wiring.monkeypatch.setattr(svc, "_rescope_personal_kbs", record_rescope)
     db = _FakeScalarSession([])
     await svc.login_with_spe(username="alice", password="pw", db=db)
-    assert ("ensure", 101, 5) in calls and ("rescope", 101) in calls
-
-    # tenantId 缺失不触发（无租户语义）
-    calls.clear()
-    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=None))
-    db2 = _FakeScalarSession([])
-    await svc.login_with_spe(username="alice", password="pw", db=db2)
     assert calls == []

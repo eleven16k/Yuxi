@@ -112,7 +112,13 @@ async def _ensure_tenant_kb(*, uid: str, department_id: int, tenant_id: Any) -> 
                 created_by_department_id=department_id,
             )
         except KBNameConflictError:
-            return  # 并发首登：他人已建同名租户库，确定性命名即同一租户库
+            # 同名库已存在：可能是并发首登（确定性命名即同租户库），也可能是
+            # scope 不匹配的同名库挡住了供给——后者会让租户永远建不出库，必须留痕
+            logging.getLogger(__name__).warning(
+                "租户知识库供给撞名（tenant_id=%s, department_id=%s）——若该库 scope 不匹配请人工核查",
+                tenant_id, department_id,
+            )
+            return
     except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
         logging.getLogger(__name__).warning("联邦登录确保租户知识库失败（uid=%s）：%s", uid, e)
 
@@ -145,6 +151,19 @@ async def _rescope_personal_kbs(*, uid: str, department_id: int) -> None:
             await KnowledgeBaseRepository().update(kb.kb_id, {"share_config": config})
     except Exception as e:  # noqa: BLE001
         logging.getLogger(__name__).warning("联邦登录个人库改档失败（uid=%s）：%s", uid, e)
+
+
+async def ensure_tenant_provisioning(*, uid: str, department_id: int | None, tenant_id: Any) -> None:
+    """租户域供给入口（spec 2026-10-08 §6）：必须在登录事务提交之后调用。
+
+    部门行由登录事务创建——供给若先于 commit 执行，独立会话落库的租户库可能
+    指向回滚后消失的部门（并发首登孤儿库，撞名静默自阻塞），故由路由在
+    commit 后调用本入口。tenantId 缺失/为空或无部门时跳过（无租户语义）。
+    """
+    if tenant_id is None or not str(tenant_id).strip() or department_id is None:
+        return
+    await _ensure_tenant_kb(uid=uid, department_id=department_id, tenant_id=tenant_id)
+    await _rescope_personal_kbs(uid=uid, department_id=department_id)
 
 
 async def login_with_spe(
@@ -212,11 +231,6 @@ async def login_with_spe(
         user.role = map_spe_role_to_yuxi(spe_profile.get("role"))
         user.department_id = department_id
     await db.refresh(user)
-
-    # 租户域供给（spec 2026-10-08 §6）：tenantId 缺失回退大部门时无租户语义，跳过
-    if tenant_id is not None and str(tenant_id).strip():
-        await _ensure_tenant_kb(uid=uid, department_id=department_id, tenant_id=tenant_id)
-        await _rescope_personal_kbs(uid=uid, department_id=department_id)
 
     # 登录即绑定：SPE JWT 入 per-user 凭据表，聊天内工具直接可用
     # （同事务写入——新用户行尚未提交，凭据行必须与用户行同进同出）
