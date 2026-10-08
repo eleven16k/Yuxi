@@ -20,6 +20,7 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
+  const isTenantAdmin = computed(() => userRole.value === 'tenant_admin')
 
   // 动作
   function applySession(data) {
@@ -230,6 +231,7 @@ export const useUserStore = defineStore('user', () => {
     isLoggedIn,
     isAdmin,
     isSuperAdmin,
+    isTenantAdmin,
 
     // 方法
     login,
