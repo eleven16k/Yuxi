@@ -52,6 +52,7 @@ KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
 AGENT_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
         "user": ResourcePermission.MANAGE,
+        "tenant_admin": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }

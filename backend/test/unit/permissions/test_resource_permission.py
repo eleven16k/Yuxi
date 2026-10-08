@@ -244,3 +244,22 @@ def test_kb_permission_matrix_other_tenant_kb_none():
     assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.NONE
     assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.NONE
+
+
+def test_tenant_admin_agent_ceiling_registered_no_inversion_below_user():
+    """评审追加：tenant_admin 须在 Agent/Skill 策略注册 MANAGE 上限——
+    未注册角色回退 READ，会让租户管理员对部门共享智能体的权限低于普通 user（倒挂）。"""
+    from yuxi.permissions import ResourcePermission, resolve_agent_permission
+
+    agent_dept_managed = SimpleNamespace(
+        created_by="someone_else",
+        share_config={"version": 2, "read_scope": _DEPT1, "manage_scope": _DEPT1},
+    )
+    agent_global_readonly = SimpleNamespace(
+        created_by="someone_else",
+        share_config={"version": 2, "read_scope": _GLOBAL, "manage_scope": None},
+    )
+
+    tenant_admin = _matrix_user("tenant_admin", department_id=1)
+    assert resolve_agent_permission(tenant_admin, agent_dept_managed) == ResourcePermission.MANAGE
+    assert resolve_agent_permission(tenant_admin, agent_global_readonly) == ResourcePermission.READ
