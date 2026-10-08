@@ -103,20 +103,23 @@ async def test_first_login_provisions_user_and_binds_jwt(wiring) -> None:
     assert user.department_id == 101
     assert wiring.cred.bound == [("spe_alice", "jwt-spe", db)]  # 登录即绑定（同事务会话）
     assert db.added and db.flushed >= 1
+    assert db.added and db.added[0].name == "SPE租户-5"  # 部门=SPE 租户（2026-10-08 spec §4.1）
 
 
-async def test_existing_user_role_synced_from_spe(wiring) -> None:
-    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(role="SUPER_ADMIN"))
+async def test_existing_user_role_and_department_synced(wiring) -> None:
+    """身份源拥有角色与租户归属：每次登录同步（spec §4.1/§4.2）。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(role="SUPER_ADMIN", tenantId=9))
     existing = SimpleNamespace(id=7, uid="spe_alice", username="alice", role="user", department_id=1, is_deleted=0)
-    db = _FakeScalarSession([existing])  # 用户命中
+    db = _FakeScalarSession([SimpleNamespace(id=55), existing])  # 租户部门命中，用户命中
     user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
-    assert user.role == "user"  # 身份源拥有角色：每次登录同步（SUPER_ADMIN 已收紧为 user）
+    assert user.role == "user"  # SUPER_ADMIN 收紧为 user
+    assert user.department_id == 55  # 部门随租户迁移
     assert db.added == []  # 不重复开户
 
 
 async def test_username_collision_gets_suffix(wiring) -> None:
     wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(username="张文杰"))
-    db = _FakeScalarSession([None, SimpleNamespace(id=1)])  # 用户未命中、同名本地用户命中
+    db = _FakeScalarSession([None, None, SimpleNamespace(id=1)])  # 部门未命中→创建、用户未命中、同名本地用户命中
     user, _ = await svc.login_with_spe(username="张文杰", password="pw", db=db)
     assert user.uid == "spe_张文杰" and user.username == "张文杰(SPE)"
 
@@ -168,21 +171,9 @@ async def test_credit_query_upstream_error_maps_502(wiring) -> None:
     assert info.value.status_code == 502
 
 
-async def test_first_login_provisions_personal_kb(wiring) -> None:
-    """开户即预建个人知识库（P1#05）；既有用户登录不重复建。"""
-    calls: list[tuple[str, str]] = []
-
-    async def fake_provision(uid: str, display_name: str) -> None:
-        calls.append((uid, display_name))
-
-    wiring.monkeypatch.setattr(svc, "_provision_personal_kb", fake_provision)
-    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
+async def test_missing_tenant_id_falls_back_to_legacy_department(wiring) -> None:
+    """tenantId 缺失：回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=None))
     db = _FakeScalarSession([])
     user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
-    assert calls == [("spe_alice", "alice")]
-
-    # 既有用户（用户命中）不再触发
-    existing = SimpleNamespace(id=7, uid="spe_alice", username="alice", role="user", department_id=1, is_deleted=0)
-    db2 = _FakeScalarSession([existing])
-    await svc.login_with_spe(username="alice", password="pw", db=db2)
-    assert calls == [("spe_alice", "alice")]
+    assert db.added[0].name == "SPE 外部用户"

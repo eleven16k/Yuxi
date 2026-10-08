@@ -6,7 +6,7 @@
 ADMIN 映射 tenant_admin（部门限管理），租户侧永不获得 superadmin，
 2026-10-08 修订）→ SPE JWT 写入绑定表（登录即
 绑定，聊天内 SPE 工具直接可用）。
-部门自动归入「SPE 外部用户」。密码永不落盘。
+部门按 SPE tenantId get-or-create（部门=SPE 租户）；tenantId 缺失回退旧「SPE 外部用户」大部门。密码永不落盘。
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from yuxi.utils.auth_utils import AuthUtils
 
 SPE_USER_UID_PREFIX = "spe_"
 SPE_DEPARTMENT_NAME = "SPE 外部用户"
+SPE_TENANT_DEPARTMENT_PREFIX = "SPE租户-"
 
 
 def map_spe_role_to_yuxi(spe_role: Any) -> str:
@@ -48,39 +49,30 @@ def spe_uid(username: str) -> str:
     return f"{SPE_USER_UID_PREFIX}{username}"
 
 
-async def _provision_personal_kb(uid: str, display_name: str) -> None:
-    """联邦开户自动预建私有知识库（P1#05）。
-
-    read_scope=user 仅本人可见；embedding 走系统已配的 minimax:embo-01。
-    失败不阻断登录——只记日志，卖家可经知识中心/管理员补救。
-    """
-    import logging
-
-    try:
-        from yuxi.knowledge.runtime import knowledge_base
-
-        await knowledge_base.create_database(
-            f"{display_name}的知识库",
-            f"联邦开户自动创建的私有知识库（{uid}）：类目笔记、供应商档案、俄语文案素材。",
-            kb_type="milvus",
-            embedding_model_spec="minimax:embo-01",
-            share_config={
-                "version": 2,
-                "read_scope": {"access_level": "user", "user_uids": [uid]},
-                "manage_scope": None,
-            },
-            created_by=uid,
-        )
-    except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
-        logging.getLogger(__name__).warning("联邦开户预建个人知识库失败（uid=%s）：%s", uid, e)
-
-
 async def _resolve_department_id(db: AsyncSession) -> int:
     """SPE 外部用户部门 get-or-create。"""
     department = await db.scalar(select(Department).where(Department.name == SPE_DEPARTMENT_NAME))
     if department is not None:
         return department.id
     department = Department(name=SPE_DEPARTMENT_NAME)
+    db.add(department)
+    await db.flush()
+    return department.id
+
+
+async def _resolve_tenant_department_id(db: AsyncSession, tenant_id: Any) -> int:
+    """按 SPE tenantId get-or-create 租户部门（部门=SPE 租户，spec 2026-10-08 §4.1）。
+
+    tenantId 缺失/为空时回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）。
+    """
+    value = str(tenant_id or "").strip()
+    if not value:
+        return await _resolve_department_id(db)
+    name = f"{SPE_TENANT_DEPARTMENT_PREFIX}{value}"
+    department = await db.scalar(select(Department).where(Department.name == name))
+    if department is not None:
+        return department.id
+    department = Department(name=name, description=f"SPE 租户 {value}（联邦登录自动创建）")
     db.add(department)
     await db.flush()
     return department.id
@@ -128,7 +120,9 @@ async def login_with_spe(
         )
 
     spe_username = spe_profile.get("username") or username.strip()
+    tenant_id = spe_profile.get("tenantId")
     uid = spe_uid(spe_username)
+    department_id = await _resolve_tenant_department_id(db, tenant_id)
     user = await db.scalar(select(User).where(User.uid == uid, User.is_deleted == 0))
     if user is None:
         # username 唯一列：与本地同名时加后缀（登录标识是 uid/手机号，不受影响）
@@ -140,15 +134,14 @@ async def login_with_spe(
             uid=uid,
             password_hash=AuthUtils.hash_password(secrets.token_urlsafe(32)),  # 不可用：身份源唯一是 SPE
             role=map_spe_role_to_yuxi(spe_profile.get("role")),
-            department_id=await _resolve_department_id(db),
+            department_id=department_id,
         )
         db.add(user)
         await db.flush()
-        # 开户即预建个人知识库（created_by 无外键，独立会话写入不依赖本事务提交）
-        await _provision_personal_kb(uid, display_name)
     else:
-        # 身份源拥有角色：每次登录同步，防止 SPE 侧降权后 Yuxi 侧残留
+        # 身份源拥有角色与租户归属：每次登录同步，防止 SPE 侧降权/换租后 Yuxi 侧残留
         user.role = map_spe_role_to_yuxi(spe_profile.get("role"))
+        user.department_id = department_id
     await db.refresh(user)
 
     # 登录即绑定：SPE JWT 入 per-user 凭据表，聊天内工具直接可用
