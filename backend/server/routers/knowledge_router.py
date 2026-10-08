@@ -172,9 +172,11 @@ async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: U
 
 def _require_upload_role(kb_id: str | None, current_user: User) -> None:
     """无 kb_id 的直传（不入库）仅平台管理员可用（spec 2026-10-08 §7）；带 kb_id 走资源权限门。"""
+    from yuxi.repositories.agent_repository import ADMIN_ROLES
+
     if kb_id:
         return
-    if current_user.role not in ("admin", "superadmin"):
+    if current_user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="请指定目标知识库后再上传")
 
 

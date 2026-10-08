@@ -89,7 +89,7 @@ def _kb_summary(kb_id: str = "kb1", *, can_manage: bool = True):
 
 @pytest.fixture
 def upload_env(monkeypatch):
-    """kb_upload 桩环境：admin 身份 + 可管理库 + 成功五步链。"""
+    """kb_upload 桩环境：可管理库（无角色门）+ 成功五步链。"""
     tasker = _FakeTasker()
     fake_kb = _FakeKB()
     uploads: list[dict] = []
@@ -105,13 +105,9 @@ def upload_env(monkeypatch):
             "size": len(file_bytes),
         }
 
-    async def fake_role(uid):
-        return "admin"
-
     monkeypatch.setattr(knowledge_file_service, "upload_knowledge_file_bytes", fake_upload)
     monkeypatch.setattr(task_service, "tasker", tasker)
     monkeypatch.setattr(internal_write, "_kb", lambda: fake_kb)
-    monkeypatch.setattr(internal_write, "_user_role", fake_role)
     monkeypatch.setattr(internal_write, "visible_kb_summaries", _returning([_kb_summary()]))
     monkeypatch.setattr(internal_write, "write_receipts", WriteReceipts())
     return SimpleNamespace(tasker=tasker, fake_kb=fake_kb, uploads=uploads, monkeypatch=monkeypatch)
@@ -127,15 +123,14 @@ def _returning(value):
 # ---------- kb_upload：门禁与校验 ----------
 
 
-async def test_kb_upload_requires_admin(upload_env, monkeypatch) -> None:
-    async def user_role(uid):
-        return "user"
+async def test_kb_upload_no_admin_role_gate(upload_env) -> None:
+    """2026-10-08 spec §7：角色门移除——目标库 MANAGE 是唯一权限闸。
 
-    monkeypatch.setattr(internal_write, "_user_role", user_role)
-    with pytest.raises(ToolException) as info:
-        await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="x")
-    assert "BIZ_FORBIDDEN" in str(info.value) and "管理员" in str(info.value)
-    assert upload_env.uploads == []
+    普通 user 对可见且可管理的库全链放行（角色不再是阻断条件）。
+    """
+    result = await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="x")
+    assert result["data"]["success"] is True
+    assert upload_env.uploads and upload_env.uploads[0]["kb_id"] == "kb1"
 
 
 async def test_kb_upload_invisible_kb_zero_probing(upload_env) -> None:
