@@ -42,7 +42,7 @@ from yuxi.storage.minio.client import normalize_public_minio_url
 from yuxi.storage.postgres.models_business import User
 from yuxi.repositories.department_repository import DepartmentRepository
 from yuxi.repositories.user_repository import UserRepository
-from yuxi.services.spe_identity_service import login_with_spe
+from yuxi.services.spe_identity_service import ensure_tenant_provisioning, login_with_spe
 from yuxi.utils import logger
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -242,6 +242,12 @@ async def login_with_spe_account(
     user.last_login = utc_now_naive()
     await db.commit()
     await clear_login_failures(client_ip, form_data.username)
+
+    # 租户域供给（spec 2026-10-08 §6）：必须在登录事务 commit 之后——部门行已持久化，
+    # 供给库才不会指向可能回滚消失的部门（expire_on_commit=False 保证 user 属性可用）
+    await ensure_tenant_provisioning(
+        uid=user.uid, department_id=user.department_id, tenant_id=spe_profile.get("tenantId")
+    )
 
     access_token = AuthUtils.create_access_token({"sub": str(user.id)})
     await log_operation(db, user.id, "SPE 账号登录", f"SPE 角色 {spe_profile.get('role')}")

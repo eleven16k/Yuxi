@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile
 
 from server.routers import knowledge_router
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.services import knowledge_task_service
+from yuxi.services import knowledge_quota_service, knowledge_task_service
 from yuxi.services.task_registry import get_task_definition
 
 pytestmark = pytest.mark.asyncio
@@ -108,7 +108,9 @@ async def test_upload_file_rejects_jsonl_uploads():
     upload = UploadFile(filename="dataset.jsonl", file=BytesIO(b'{"query":"hello"}\n'))
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1"))
+        await knowledge_router.upload_file(
+            upload, kb_id=None, current_user=SimpleNamespace(uid="user_1", role="admin")
+        )
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Unsupported file type: .jsonl"
@@ -125,9 +127,17 @@ async def test_upload_file_rejects_jsonl_uploads():
 async def test_rejects_oversized_file(monkeypatch, call_upload):
     monkeypatch.setattr(knowledge_router, "MAX_UPLOAD_SIZE_BYTES", 5)
 
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         return None
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
@@ -153,6 +163,9 @@ async def test_rejects_oversized_file(monkeypatch, call_upload):
 async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status_code, error_detail):
     calls = {"read": 0, "upload": 0}
 
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         raise HTTPException(status_code=status_code, detail=error_detail)
 
@@ -164,6 +177,11 @@ async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status
         calls["upload"] += 1
         return "minio://knowledgebases/kb_1/upload/demo.txt"
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
@@ -179,6 +197,80 @@ async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status
 
     assert exc_info.value.status_code == status_code
     assert calls == {"read": 0, "upload": 0}
+
+
+async def test_upload_file_quota_edge_maps_413(monkeypatch):
+    """边缘接线（spec 2026-10-08 §8）：配额拒绝经真实 upload_knowledge_file_bytes 链路 → 413，不触 MinIO。"""
+    from yuxi.services import knowledge_file_service
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
+
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+        return None
+
+    async def reject_quota(kb_id: str, **kwargs):
+        raise TenantKBQuotaExceededError("知识库存储已达配额上限（现有 0 + 新增 4 > 3 字节），请删除旧文档后再上传")
+
+    async def fake_existed(kb_id: str, content_hash: str) -> bool:
+        return False
+
+    async def fail_minio(*_args, **_kwargs):
+        raise AssertionError("配额拒绝必须发生在 MinIO 上传之前")
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", fake_ensure_database_permission)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", reject_quota)
+    monkeypatch.setattr(knowledge_file_service, "_kb", lambda: SimpleNamespace(file_existed_in_db=fake_existed))
+    monkeypatch.setattr(knowledge_file_service, "aupload_file_to_minio", fail_minio)
+
+    upload = UploadFile(filename="demo.txt", file=BytesIO(b"demo"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.upload_file(upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1"))
+
+    assert exc_info.value.status_code == 413
+    assert "配额上限" in exc_info.value.detail
+
+
+async def test_upload_file_dedup_wins_over_quota(monkeypatch):
+    """边缘接线顺序（Minor b）：配额检查在去重之后——同内容重复 + 配额超限同时成立时报 409 而非 413。"""
+    from yuxi.services import knowledge_file_service
+
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+        return None
+
+    async def reject_quota(kb_id: str, **kwargs):
+        raise AssertionError("重复内容应先命中去重（409），不应触发配额判定")
+
+    async def fake_existed(kb_id: str, content_hash: str) -> bool:
+        return True
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", fake_ensure_database_permission)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", reject_quota)
+    monkeypatch.setattr(knowledge_file_service, "_kb", lambda: SimpleNamespace(file_existed_in_db=fake_existed))
+
+    upload = UploadFile(filename="demo.txt", file=BytesIO(b"demo"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.upload_file(upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1"))
+
+    assert exc_info.value.status_code == 409
+    assert "相同内容" in exc_info.value.detail
 
 
 async def test_index_documents_uses_uid_for_operator(monkeypatch):
@@ -557,11 +649,16 @@ async def test_add_uploaded_documents_rejects_invalid_payload(monkeypatch, paylo
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         return None
 
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    async def fake_ensure_tenant_kb_quota(kb_id: str, **kwargs) -> None:
+        return None
+
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", fake_ensure_tenant_kb_quota)
 
     with pytest.raises(HTTPException) as exc_info:
         await knowledge_router.add_uploaded_documents(
@@ -591,11 +688,16 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
     async def fail_enqueue(*_args, **_kwargs):
         raise AssertionError("documents/add must not enqueue tasker work")
 
+    # quota 服务为函数内惰性 import：桩必须打在源模块属性上（spec 2026-10-08 §8）
+    async def fake_ensure_tenant_kb_quota(kb_id: str, **kwargs) -> None:
+        return None
+
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", fake_ensure_tenant_kb_quota)
     monkeypatch.setattr(knowledge_router.knowledge_base, "add_file_record", fake_add_file_record)
     monkeypatch.setattr(knowledge_router.tasker, "enqueue", fail_enqueue)
 
@@ -626,6 +728,43 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
         },
         "operator_id": "uid-user",
     }
+
+
+async def test_add_uploaded_documents_quota_edge_maps_413(monkeypatch):
+    """边缘接线（spec 2026-10-08 §8）：documents/add 配额拒绝 → 413，且不进入登记循环。"""
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
+
+    item = "minio://knowledgebases/kb_1/upload/demo.txt"
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+        return None
+
+    async def reject_quota(kb_id: str, **kwargs):
+        raise TenantKBQuotaExceededError("知识库文件数已达配额上限（现有 499 + 新增 2 > 500），请删除旧文档后再上传")
+
+    async def fail_add_file_record(*_args, **_kwargs):
+        raise AssertionError("配额拒绝必须发生在登记之前")
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
+    monkeypatch.setattr(knowledge_quota_service, "ensure_tenant_kb_quota", reject_quota)
+    monkeypatch.setattr(knowledge_router.knowledge_base, "add_file_record", fail_add_file_record)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.add_uploaded_documents(
+            "kb_1",
+            knowledge_router.AddUploadedDocumentsRequest(
+                items=[item],
+                params={"content_hashes": {item: "hash_1"}},
+            ),
+            current_user=SimpleNamespace(uid="uid-user"),
+        )
+
+    assert exc_info.value.status_code == 413
+    assert "配额上限" in exc_info.value.detail
 
 
 async def test_virtual_folder_migration_uses_registered_durable_handler(monkeypatch):

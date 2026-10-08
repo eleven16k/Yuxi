@@ -6,7 +6,7 @@ from typing import Any
 
 from yuxi.knowledge.read_models import KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.knowledge.utils.security import redact_sensitive_params
-from yuxi.permissions import ResourcePermission
+from yuxi.permissions import ResourcePermission, is_official_share_config
 from yuxi.utils.datetime_utils import utc_isoformat
 
 
@@ -76,3 +76,18 @@ def serialize_knowledge_base(
 def serialize_knowledge_base_list(databases: list[KnowledgeBaseSummary]) -> dict[str, list[dict[str, Any]]]:
     """转换知识库摘要列表为现有列表接口响应。"""
     return {"databases": [serialize_knowledge_base(database, row_count_fallback=True) for database in databases]}
+
+
+def serialize_accessible_knowledge_base(database: KnowledgeBaseSummary) -> dict[str, Any]:
+    """accessible 列表条目：Agent 挂库选择与租户知识中心共用（spec 2026-10-08 §7/§9）。"""
+    return {
+        "name": database.name,
+        "kb_id": database.kb_id,
+        "description": database.description or "",
+        "created_by": database.created_by,
+        "kb_type": database.kb_type,
+        "created_at": utc_isoformat(database.created_at) if database.created_at else None,
+        "file_count": database.file_count,
+        "is_official": is_official_share_config(database.share_config),
+        "can_manage": database.can_manage,
+    }

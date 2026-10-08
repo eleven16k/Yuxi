@@ -248,6 +248,30 @@ spe_agent_opts = Option(
     },
 )
 
+spe_kb_quota_opts = Option(
+    key="spe_kb_quota_opts",
+    name="租户知识库配额",
+    description="租户知识中心的兜底配额（官方库豁免，spec 2026-10-08 §8）；0 表示不限制。",
+    params={
+        "fields": [
+            {
+                "key": "max_file_count",
+                "label": "单库文件数上限",
+                "type": "string",
+                "default": "500",
+                "help": "超过后拒绝上传；0 表示不限制。默认 500。",
+            },
+            {
+                "key": "max_total_bytes",
+                "label": "单库总字节上限",
+                "type": "string",
+                "default": "2147483648",
+                "help": "超过后拒绝上传；0 表示不限制。默认 2GB（2147483648）。",
+            },
+        ]
+    },
+)
+
 OPTION_DEFINITIONS = {
     option.key: option
     for option in (
@@ -257,6 +281,7 @@ OPTION_DEFINITIONS = {
         paddleocr_api_opts,
         remote_skill_source_policy,
         spe_agent_opts,
+        spe_kb_quota_opts,
         system_options,
     )
 }

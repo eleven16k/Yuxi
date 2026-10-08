@@ -326,7 +326,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   BarChart3,
   ChevronDown,
@@ -358,6 +358,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const route = useRoute()
 const taskerStore = useTaskerStore()
 const loading = ref(true)
 const errorMessage = ref('')
@@ -467,10 +468,16 @@ const handleBenchmarkCreateAction = ({ key }) => {
   if (key === 'generate') generateModalOpen.value = true
 }
 
+// 评估详情钻取路由按来源分支：知识中心走租户开放子路由，/extensions 走原 admin 路由
+const evaluationDetailRouteName = () =>
+  route.path.startsWith('/knowledge')
+    ? 'KnowledgeCenterEvaluationDetail'
+    : 'ExtensionEvaluationBenchmarkDetail'
+
 const openDataset = (dataset) => {
   if (!isDatasetViewable(dataset)) return
   router.push({
-    name: 'ExtensionEvaluationBenchmarkDetail',
+    name: evaluationDetailRouteName(),
     params: { kbId: props.kbId, datasetId: dataset.dataset_id }
   })
 }
@@ -478,7 +485,7 @@ const openDataset = (dataset) => {
 const openRun = (run) => {
   if (!datasetById.value[run.dataset_id]) return
   router.push({
-    name: 'ExtensionEvaluationBenchmarkDetail',
+    name: evaluationDetailRouteName(),
     params: { kbId: props.kbId, datasetId: run.dataset_id },
     query: { view: 'results', run: run.run_id }
   })

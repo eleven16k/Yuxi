@@ -70,14 +70,14 @@ async def visible_kb_summaries(runtime: ToolRuntime) -> list[dict[str, Any]]:
 
 def _summary_to_dict(summary: Any) -> dict[str, Any]:
     """KnowledgeBaseSummary → 需要的字段投影（含 scope 判定所需 share_config）。"""
-    share_config = getattr(summary, "share_config", None) or {}
-    read_scope = share_config.get("read_scope") or {} if isinstance(share_config, dict) else {}
+    from yuxi.permissions import is_official_share_config
+
     return {
         "kb_id": summary.kb_id,
         "name": summary.name,
         "description": summary.description,
         "kb_type": summary.kb_type,
-        "is_official": read_scope.get("access_level") == "global",
+        "is_official": is_official_share_config(getattr(summary, "share_config", None)),
         "kb_name": summary.name,
         "can_manage": bool(getattr(summary, "can_manage", False)),
     }

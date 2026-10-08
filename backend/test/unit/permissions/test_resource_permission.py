@@ -101,11 +101,32 @@ def test_user_agent_and_skill_scope_preserves_user_management():
 
 
 def test_knowledge_base_owner_and_superadmin_can_manage():
+    """owner 分支也过角色上限（spec 2026-10-08 §5.1 修订）：user owner 只 READ，
+    tenant_admin/admin owner MANAGE，superadmin 恒 MANAGE。"""
     resource = _resource(created_by="owner", share_config={"version": 2})
 
-    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.READ
+    assert (
+        resolve_knowledge_base_permission(_user(uid="owner", role="tenant_admin"), resource)
+        == ResourcePermission.MANAGE
+    )
     assert resolve_knowledge_base_permission(_user(uid="owner", role="admin"), resource) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+
+
+def test_kb_owner_ceiling_overlaps_department_manage_scope():
+    """重叠格：user-owner × 本租户部门档库（manage_scope 含 owner 所在部门）→ READ。
+
+    拥有者早退发生在 ceiling 应用之前会被此格穿透成 MANAGE（评审 Issue 1a）；
+    修复后 owner 分支返回 min(MANAGE, ceiling)=READ（spec §5.1）。"""
+    kb = _matrix_kb(_DEPT1, manage_scope=_DEPT1, created_by="u1")
+    assert resolve_knowledge_base_permission(_matrix_user("user", uid="u1", department_id=1), kb) == (
+        ResourcePermission.READ
+    )
+    # 对照：tenant_admin owner 在同格仍 MANAGE（ceiling 不削）
+    assert resolve_knowledge_base_permission(
+        _matrix_user("tenant_admin", uid="u1", department_id=1), kb
+    ) == ResourcePermission.MANAGE
 
 
 def test_global_knowledge_base_share_remains_manage_for_admin():
@@ -194,3 +215,72 @@ def test_v2_scope_validation_rejects_disallowed_access_level():
             },
             allowed_access_levels={"user"},
         )
+
+
+# ---------- 2026-10-08 spec §5.1：知识库 3 角色 × 3 类库矩阵 ----------
+
+
+def _matrix_user(role, uid="u1", department_id=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(role=role, uid=uid, department_id=department_id)
+
+
+def _matrix_kb(read_scope, manage_scope=None, created_by="someone_else"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        created_by=created_by,
+        share_config={"version": 2, "read_scope": read_scope, "manage_scope": manage_scope},
+    )
+
+
+_GLOBAL = {"access_level": "global", "department_ids": [], "user_uids": []}
+_DEPT1 = {"access_level": "department", "department_ids": [1], "user_uids": []}
+_DEPT2 = {"access_level": "department", "department_ids": [2], "user_uids": []}
+
+
+def test_kb_permission_matrix_official_read_for_all_tenants():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_GLOBAL)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.READ
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.READ
+
+
+def test_kb_permission_matrix_own_tenant_kb():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_DEPT1, manage_scope=_DEPT1)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.READ
+
+
+def test_kb_permission_matrix_other_tenant_kb_none():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_DEPT2, manage_scope=_DEPT2)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.NONE
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.NONE
+
+
+def test_tenant_admin_agent_ceiling_registered_no_inversion_below_user():
+    """评审追加：tenant_admin 须在 Agent/Skill 策略注册 MANAGE 上限——
+    未注册角色回退 READ，会让租户管理员对部门共享智能体的权限低于普通 user（倒挂）。"""
+    from yuxi.permissions import ResourcePermission, resolve_agent_permission
+
+    agent_dept_managed = SimpleNamespace(
+        created_by="someone_else",
+        share_config={"version": 2, "read_scope": _DEPT1, "manage_scope": _DEPT1},
+    )
+    agent_global_readonly = SimpleNamespace(
+        created_by="someone_else",
+        share_config={"version": 2, "read_scope": _GLOBAL, "manage_scope": None},
+    )
+
+    tenant_admin = _matrix_user("tenant_admin", department_id=1)
+    assert resolve_agent_permission(tenant_admin, agent_dept_managed) == ResourcePermission.MANAGE
+    assert resolve_agent_permission(tenant_admin, agent_global_readonly) == ResourcePermission.READ
