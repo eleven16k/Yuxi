@@ -939,9 +939,10 @@ const fileList = computed(() => {
 })
 
 const canEditShareConfig = computed(() => canManageDatabase.value)
-// 官方域（global 档）平台独家维护：非平台管理员仅可选部门/指定人档（终审修复，与后端钳制一致）
+// 官方域（global 档）平台独家维护、user 档为未启用保留档：
+// 非平台管理员仅可选本租户部门档（终审复核补丁，与后端钳制一致）
 const shareAllowedAccessLevels = computed(() =>
-  userStore.isAdmin ? ['global', 'department', 'user'] : ['department', 'user']
+  userStore.isAdmin ? ['global', 'department', 'user'] : ['department']
 )
 
 const shareConfigDisplay = computed(() => {

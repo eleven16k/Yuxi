@@ -180,10 +180,12 @@ def _require_upload_role(kb_id: str | None, current_user: User) -> None:
 
 
 def _clamp_share_config_for_non_platform_admin(payload: dict, current_user: User) -> None:
-    """非平台管理员不得把知识库共享范围放大到 global 或本部门之外（spec §3/§8、终审修复）。
+    """非平台管理员不得把知识库共享范围放大到 global、user 档或本部门之外（spec §3/§8、终审修复）。
 
     global 档 = 官方域（全体租户可见 + is_official 配额豁免），仅平台管理员可设置；
-    department 档不得包含本租户之外的部门 ID，防止跨租户渗透。
+    department 档不得包含本租户之外的部门 ID，防止跨租户渗透；
+    user 档为未启用保留档（个人库走 D1、租户库=department 档），整体仅平台管理员可设置，
+    防止经 user_uids 塞他租户 uid 渗透授出（终审复核补丁）。
     """
     share_config = payload.get("share_config")
     if not isinstance(share_config, dict) or current_user.role in ADMIN_ROLES:
@@ -194,6 +196,8 @@ def _clamp_share_config_for_non_platform_admin(payload: dict, current_user: User
             continue
         if scope.get("access_level") == "global":
             raise HTTPException(status_code=403, detail="全局共享仅平台管理员可设置")
+        if scope.get("access_level") == "user":
+            raise HTTPException(status_code=403, detail="指定用户共享仅平台管理员可设置")
         if scope.get("access_level") == "department":
             for department_id in scope.get("department_ids") or []:
                 try:

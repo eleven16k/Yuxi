@@ -116,15 +116,33 @@ def test_clamp_rejects_manage_scope_global_too():
     assert info.value.status_code == 403
 
 
-def test_clamp_allows_own_department_and_user_scope():
+def test_clamp_allows_own_department_scope():
     own_dept = _share_payload({"access_level": "department", "department_ids": [7], "user_uids": []})
     kr._clamp_share_config_for_non_platform_admin(own_dept, _user("tenant_admin", department_id=7))  # 不抛
+    kr._clamp_share_config_for_non_platform_admin({"share_config": None}, _user("user", department_id=7))  # 未携带不拦
+
+
+def test_clamp_rejects_user_scope():
+    """user 档是未启用保留档：非平台管理员不得经 user_uids 跨租户渗透授出（终审复核补丁）。"""
     user_scope = _share_payload(
-        {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+        {"access_level": "user", "department_ids": [], "user_uids": ["spe_other_tenant"]},
+        {"access_level": "user", "department_ids": [], "user_uids": ["spe_other_tenant"]},
+    )
+    with pytest.raises(HTTPException) as info:
+        kr._clamp_share_config_for_non_platform_admin(user_scope, _user("tenant_admin", department_id=7))
+    assert info.value.status_code == 403
+    assert "指定用户共享" in info.value.detail
+
+
+def test_clamp_rejects_manage_scope_user_too():
+    """manage_scope 单独 user 档同样被钳制。"""
+    payload = _share_payload(
+        {"access_level": "department", "department_ids": [7], "user_uids": []},
         {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
     )
-    kr._clamp_share_config_for_non_platform_admin(user_scope, _user("user", department_id=7))  # 不抛
-    kr._clamp_share_config_for_non_platform_admin({"share_config": None}, _user("user", department_id=7))  # 未携带不拦
+    with pytest.raises(HTTPException) as info:
+        kr._clamp_share_config_for_non_platform_admin(payload, _user("tenant_admin", department_id=7))
+    assert info.value.status_code == 403
 
 
 def test_clamp_allows_platform_admin_global():
