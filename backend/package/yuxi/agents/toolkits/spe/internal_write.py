@@ -103,34 +103,36 @@ async def _kb_upload_impl(runtime: ToolRuntime, **params: Any) -> dict[str, Any]
     if not target.get("can_manage"):
         raise ToolException(format_spe_failure("BIZ_FORBIDDEN", f"对知识库 '{target['kb_name']}' 没有管理权限"))
 
-    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
-
-    try:
-        await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=len(content.encode("utf-8")))
-    except TenantKBQuotaExceededError as e:
-        raise ToolException(format_spe_failure("BIZ_FORBIDDEN", str(e))) from e
-
     content_hash = _content_hash16(content)
     # opKey 用内容哈希前 16 位而非全文；kbId 必进键（同内容异库是不同操作）
     receipt_args = {"kbId": kb_id, "filename": filename, "contentHash": content_hash}
 
     from yuxi.services.knowledge_file_service import KnowledgeFileDuplicateError, upload_knowledge_file_bytes
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
     from yuxi.services.task_service import tasker
 
     async def _run() -> tuple[str, dict[str, Any]]:
         file_bytes = content.encode("utf-8")
         try:
+            # 配额边缘检查在 upload_knowledge_file_bytes 内（同内容去重之后、上传之前）
             uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=filename, file_bytes=file_bytes)
         except KnowledgeFileDuplicateError as e:
             raise SpeToolError(
                 "YUXI_DUPLICATE_CONTENT",
                 f"该文件内容已存在，无需重复上传——用 kb_list/yuxi_kb_search 确认；确需重传先删除或修改（{e}）",
             ) from e
+        except TenantKBQuotaExceededError as e:
+            raise SpeToolError("BIZ_FORBIDDEN", str(e)) from e
 
         minio_path = uploaded["minio_path"]
-        added = await _kb().add_file_record(
-            kb_id, minio_path, {"content_hashes": {minio_path: uploaded["content_hash"]}}, operator_id=uid
-        )
+        try:
+            # 扼制点（add_file_record 权威判定，spec 2026-10-08 §8）拒绝时统一映射
+            # BIZ_FORBIDDEN——write_receipts 对异常原样冒泡，不映射会以裸异常逃到工具层
+            added = await _kb().add_file_record(
+                kb_id, minio_path, {"content_hashes": {minio_path: uploaded["content_hash"]}}, operator_id=uid
+            )
+        except TenantKBQuotaExceededError as e:
+            raise SpeToolError("BIZ_FORBIDDEN", str(e)) from e
         file_id = _first_success_file_id(added)
         if file_id is None:
             raise SpeToolError("TOOL_UPSTREAM_ERROR", "知识文件登记失败（无成功条目）")

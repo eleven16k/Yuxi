@@ -59,6 +59,13 @@ async def upload_knowledge_file_bytes(
             "数据库中已经存在了相同内容文件，File with the same content already exists in this database"
         )
 
+    # 边缘快速失败（省上传带宽）：同内容去重之后、MinIO 上传之前；权威判定在
+    # add_file_record 扼制点（spec 2026-10-08 §8），此处仅避免误导性配额文案。
+    if kb_id:
+        from yuxi.services.knowledge_quota_service import ensure_tenant_kb_quota
+
+        await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=len(file_bytes))
+
     timestamp = int(time.time() * 1000)
     minio_filename = f"{basename}_{timestamp}{ext}"
     bucket_name = MinIOClient.KB_BUCKETS["documents"]

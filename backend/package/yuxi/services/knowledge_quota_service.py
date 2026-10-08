@@ -8,15 +8,19 @@ class TenantKBQuotaExceededError(Exception):
 
 
 async def ensure_tenant_kb_quota(kb_id: str, *, incoming_count: int = 1, incoming_bytes: int = 0) -> None:
-    """写入前校验租户库兜底配额；官方库（global）豁免；配置为 0 视为不限制。"""
+    """写入前校验租户库兜底配额；官方库（global）豁免；配置为 0 视为不限制。
+
+    边缘调用方（路由/上传 service/kb_upload 工具）作快速失败；权威判定
+    在 KnowledgeBase.add_file_record 扼制点（stat 得真实 size 后、写入前）。
+    """
     from yuxi.config.options import spe_kb_quota_opts
     from yuxi.knowledge.runtime import knowledge_base
+    from yuxi.permissions import is_official_share_config
 
     detail = await knowledge_base.get_database_info(kb_id)
     if detail is None:
         return  # 库不存在由后续权限/登记链路报错，此处不抢答
-    read_scope = (detail.share_config or {}).get("read_scope") or {}
-    if read_scope.get("access_level") == "global":
+    if is_official_share_config(detail.share_config):
         return
 
     config = await spe_kb_quota_opts.get()

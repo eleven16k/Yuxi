@@ -66,3 +66,23 @@ async def test_zero_config_disables_quota(env):
 
 async def test_within_quota_passes(env):
     await ensure_tenant_kb_quota("kb1", incoming_count=1, incoming_bytes=50)  # 不抛
+
+
+async def test_dirty_config_treated_as_unlimited(env):
+    """防御分支：配置脏值（int() 抛 TypeError/ValueError）按不限制处理，不阻断业务。"""
+    env.holder["detail"] = _detail(file_count=10**9, total_size=10**12)
+    env.opts.update(max_file_count="abc", max_total_bytes=["not-int"])  # ValueError / TypeError
+    await ensure_tenant_kb_quota("kb1", incoming_count=5, incoming_bytes=999)  # 不抛
+
+
+async def test_kb_not_found_returns_silently(monkeypatch, env):
+    """防御分支：库不存在直接 return（由后续权限/登记链路报错），且不读取配额配置。"""
+    from yuxi.config import options as options_mod
+
+    env.holder["detail"] = None
+
+    async def _fail_get():
+        raise AssertionError("库不存在时不应读取配额配置")
+
+    monkeypatch.setattr(options_mod.spe_kb_quota_opts, "get", _fail_get)
+    await ensure_tenant_kb_quota("missing", incoming_count=1, incoming_bytes=10)  # 不抛、不取配置

@@ -776,15 +776,16 @@ async def add_uploaded_documents(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
+    logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
+    await _ensure_database_supports_documents(kb_id, "文档添加")
+
+    # 边缘快速失败（仅文件数维度）；权威判定在 add_file_record 扼制点（spec 2026-10-08 §8）
     from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
 
     try:
         await ensure_tenant_kb_quota(kb_id, incoming_count=len(payload.items))
     except TenantKBQuotaExceededError as e:
         raise HTTPException(status_code=413, detail=str(e)) from e
-
-    logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
-    await _ensure_database_supports_documents(kb_id, "文档添加")
 
     params = _ensure_document_params(payload.params)
     content_type = params.get("content_type", "file")
@@ -1681,13 +1682,8 @@ async def upload_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if kb_id:
-        from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
-
-        try:
-            await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=len(file_bytes))
-        except TenantKBQuotaExceededError as e:
-            raise HTTPException(status_code=413, detail=str(e)) from e
+    # 配额边缘检查在 upload_knowledge_file_bytes 内（同内容去重之后、MinIO 上传之前）
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
 
     try:
         uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=file.filename, file_bytes=file_bytes)
@@ -1695,6 +1691,8 @@ async def upload_file(
         raise HTTPException(status_code=409, detail=str(e))
     except KnowledgeFileTypeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TenantKBQuotaExceededError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "File successfully uploaded", **uploaded}

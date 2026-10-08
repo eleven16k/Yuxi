@@ -136,6 +136,17 @@ def normalize_permission_config(
     raise ValueError("资源共享配置必须使用 version 2")
 
 
+def is_official_share_config(share_config: dict | None) -> bool:
+    """判定共享配置是否官方（read_scope access_level == global）域。
+
+    知识中心双域划分（spec 2026-10-08）的 is_official 派生唯一出处，
+    kb_tools / knowledge_response / 配额豁免共用，防止口径漂移。
+    """
+    config = share_config if isinstance(share_config, dict) else {}
+    read_scope = config.get("read_scope") or {}
+    return isinstance(read_scope, dict) and read_scope.get("access_level") == "global"
+
+
 def scope_matches(user: Any, scope: dict | None) -> bool:
     """判断用户是否命中一个共享范围。"""
 

@@ -210,6 +210,74 @@ async def test_kb_upload_duplicate_content_maps_contract_code(upload_env, monkey
     assert "无需重复上传" in str(info.value)
 
 
+# ---------- kb_upload：配额接线（spec 2026-10-08 §8，Task 7 评审修复） ----------
+
+
+def _quota_edge_env(monkeypatch, *, file_exists: bool):
+    """kb_upload 边缘接线环境：放行真实 upload_knowledge_file_bytes，只桩其惰性依赖。"""
+    from yuxi.services import knowledge_quota_service as quota_svc
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
+
+    async def reject_quota(kb_id, **kwargs):
+        raise TenantKBQuotaExceededError("知识库存储已达配额上限（现有 0 + 新增 5 > 4 字节），请删除旧文档后再上传")
+
+    async def fake_existed(kb_id, content_hash):
+        return file_exists
+
+    async def fail_minio(*_args, **_kwargs):
+        raise AssertionError("配额拒绝必须发生在 MinIO 上传之前")
+
+    async def fail_add(*_args, **_kwargs):
+        raise AssertionError("配额拒绝必须发生在登记之前")
+
+    monkeypatch.setattr(quota_svc, "ensure_tenant_kb_quota", reject_quota)
+    monkeypatch.setattr(knowledge_file_service, "_kb", lambda: SimpleNamespace(file_existed_in_db=fake_existed))
+    monkeypatch.setattr(knowledge_file_service, "aupload_file_to_minio", fail_minio)
+    monkeypatch.setattr(internal_write, "_kb", lambda: SimpleNamespace(add_file_record=fail_add))
+    monkeypatch.setattr(internal_write, "visible_kb_summaries", _returning([_kb_summary()]))
+    monkeypatch.setattr(internal_write, "write_receipts", WriteReceipts())
+
+
+async def test_kb_upload_quota_edge_rejects_with_biz_forbidden() -> None:
+    """边缘接线（Issue 3）：源模块配额拒绝 → 真实 upload 链路抛出 → 映射 BIZ_FORBIDDEN。"""
+    with pytest.MonkeyPatch.context() as mp:
+        _quota_edge_env(mp, file_exists=False)
+        with pytest.raises(ToolException) as info:
+            await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="hello")
+    assert "BIZ_FORBIDDEN" in str(info.value)
+    assert "配额上限" in str(info.value)
+
+
+async def test_kb_upload_dedup_wins_over_quota() -> None:
+    """边缘接线顺序（Minor b）：配额检查在去重之后——重复内容先报 YUXI_DUPLICATE_CONTENT，不触配额判定。"""
+    from yuxi.services import knowledge_quota_service as quota_svc
+
+    async def reject_quota(kb_id, **kwargs):
+        raise AssertionError("重复内容应先命中去重，不应触发配额判定")
+
+    with pytest.MonkeyPatch.context() as mp:
+        _quota_edge_env(mp, file_exists=True)
+        mp.setattr(quota_svc, "ensure_tenant_kb_quota", reject_quota)
+        with pytest.raises(ToolException) as info:
+            await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="hello")
+    assert "YUXI_DUPLICATE_CONTENT" in str(info.value)
+
+
+async def test_kb_upload_chokepoint_rejection_maps_biz_forbidden(upload_env, monkeypatch) -> None:
+    """扼制点（add_file_record 权威判定）拒绝经 write_receipts 冒泡后映射 BIZ_FORBIDDEN，非裸异常。"""
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
+
+    async def add_raises(kb_id, item, params, operator_id=None):
+        raise TenantKBQuotaExceededError("知识库存储已达配额上限（重复登记），请删除旧文档后再上传")
+
+    monkeypatch.setattr(upload_env.fake_kb, "add_file_record", add_raises)
+    with pytest.raises(ToolException) as info:
+        await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="x")
+    assert "BIZ_FORBIDDEN" in str(info.value)
+    assert "配额上限" in str(info.value)
+    assert upload_env.tasker.enqueued == []  # 登记被拒，不排队解析任务
+
+
 async def test_kb_upload_receipt_dedup_by_content_hash(upload_env) -> None:
     await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="same")
     second = await internal_write.kb_upload.coroutine(runtime=_runtime(), kb_id="kb1", filename="a.md", content="same")
