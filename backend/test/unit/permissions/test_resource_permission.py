@@ -241,5 +241,6 @@ def test_kb_permission_matrix_other_tenant_kb_none():
     from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
 
     kb = _matrix_kb(_DEPT2, manage_scope=_DEPT2)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.NONE
     assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.NONE
