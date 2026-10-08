@@ -38,12 +38,16 @@ async def _build_middlewares(context, backend):
         # 最外层隔离普通工具异常，保留取消与 interrupt 的传播。
         ToolErrorGuardMiddleware(),
         SteerMiddleware(),
-        create_agent_filesystem_middleware(
-            getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
-            backend=backend,
-        ),
-        SkillsMiddleware(),
     ]
+    # 沙盒文件/命令工具按 context 开关装配（卖家助手关闭：execute 误用会撞审批闸）
+    if getattr(context, "enable_filesystem_tools", True):
+        middlewares.append(
+            create_agent_filesystem_middleware(
+                getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
+                backend=backend,
+            )
+        )
+    middlewares.append(SkillsMiddleware())
     memory_middleware = await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)

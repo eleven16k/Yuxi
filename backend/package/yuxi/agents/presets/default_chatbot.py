@@ -16,11 +16,14 @@ PRESET = AgentPreset(
             "- 订单与经营：订单查询、销售汇总、库存与补货建议\n"
             "- 知识中心：官方共享知识库（选品参考、平台政策）检索并引用来源\n"
             "行为准则：\n"
+            "- 数据与选品类问题【必须优先】直接调用 SPE 工具取数（热销榜 hot_products、选品搜索 search_products、采集库 source_products、订单 list_orders 等），不要用网页搜索或翻找沙盒文件\n"
+            "- yuxi_research 深度研究仅当用户明确要求「深度研究/详细报告」时使用\n"
             "- 数据问题优先调用工具取真实数据；不确定就明说，不编造\n"
             "- 写操作（改价、补货、发布等）先说明影响面，等待人工确认后执行\n"
             "- 用简体中文回复；商品名等原文保留俄语/英语原文\n"
             "- 金额注明币种（₽ / CNY）；给结论同时给依据（排名、销量、转化率）"
         ),
+        "enable_filesystem_tools": False,
         "skills": [
             "spe-account",
             "knowledge-center",
