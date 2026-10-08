@@ -127,9 +127,17 @@ async def test_upload_file_rejects_jsonl_uploads():
 async def test_rejects_oversized_file(monkeypatch, call_upload):
     monkeypatch.setattr(knowledge_router, "MAX_UPLOAD_SIZE_BYTES", 5)
 
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         return None
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
@@ -155,6 +163,9 @@ async def test_rejects_oversized_file(monkeypatch, call_upload):
 async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status_code, error_detail):
     calls = {"read": 0, "upload": 0}
 
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         raise HTTPException(status_code=status_code, detail=error_detail)
 
@@ -166,6 +177,11 @@ async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status
         calls["upload"] += 1
         return "minio://knowledgebases/kb_1/upload/demo.txt"
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",

@@ -11,6 +11,9 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatch):
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         assert slug == "db_1"
         assert "文档添加" in operation
@@ -31,6 +34,11 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
         assert data == b"# workspace note\n"
         return f"http://minio/{bucket_name}/{file_name}"
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
@@ -67,12 +75,20 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
 
 
 async def test_import_workspace_files_rejects_directory(monkeypatch):
+    async def fake_ensure_database_permission(_kb_id, _current_user, _required) -> None:
+        return None
+
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         return None
 
     async def fake_read_workspace_file_bytes(**_kwargs):
         raise HTTPException(status_code=400, detail="当前路径不是文件: /folder")
 
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_permission",
+        fake_ensure_database_permission,
+    )
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",

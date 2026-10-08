@@ -3,9 +3,12 @@
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
+from server.routers import knowledge_router as kr
 from server.utils import knowledge_permissions as kp
+from server.utils.auth_middleware import get_required_user
 
 
 def _user(role, uid="u1", department_id=None):
@@ -49,8 +52,6 @@ async def test_other_tenant_denied(dept_kb_runtime):
 
 # ---------- /files/upload 无 kb_id 直传仅平台管理员（spec §7） ----------
 
-from server.routers import knowledge_router as kr
-
 
 async def test_upload_without_kb_id_admin_only():
     kr._require_upload_role(None, _user("admin"))  # 不抛
@@ -58,3 +59,22 @@ async def test_upload_without_kb_id_admin_only():
     with pytest.raises(HTTPException) as info:
         kr._require_upload_role(None, _user("user"))
     assert info.value.status_code == 403
+
+
+def test_upload_route_without_kb_id_rejects_non_admin():
+    """路由级接线：登录的非管理员直传（无 kb_id）在进入上传逻辑前被 403 拒绝。"""
+    app = FastAPI()
+    app.include_router(kr.knowledge)
+
+    async def fake_required_user():
+        return _user("user", department_id=7)
+
+    app.dependency_overrides[get_required_user] = fake_required_user
+
+    response = TestClient(app).post(
+        "/knowledge/files/upload",
+        files={"file": ("demo.txt", b"hello")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "请指定目标知识库后再上传"

@@ -162,7 +162,7 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
 
 async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
     """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
-    if kb_id and getattr(current_user, "role", None):
+    if kb_id:
         await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
 
 
