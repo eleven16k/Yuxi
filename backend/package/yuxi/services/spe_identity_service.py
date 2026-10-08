@@ -63,9 +63,12 @@ async def _resolve_department_id(db: AsyncSession) -> int:
 async def _resolve_tenant_department_id(db: AsyncSession, tenant_id: Any) -> int:
     """按 SPE tenantId get-or-create 租户部门（部门=SPE 租户，spec 2026-10-08 §4.1）。
 
-    tenantId 缺失/为空时回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）。
+    tenantId 缺失/为空时回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）；
+    0 是显式租户值，不吞入回退。
     """
-    value = str(tenant_id or "").strip()
+    if tenant_id is None:
+        return await _resolve_department_id(db)
+    value = str(tenant_id).strip()
     if not value:
         return await _resolve_department_id(db)
     name = f"{SPE_TENANT_DEPARTMENT_PREFIX}{value}"

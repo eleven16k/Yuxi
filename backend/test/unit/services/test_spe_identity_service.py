@@ -102,8 +102,7 @@ async def test_first_login_provisions_user_and_binds_jwt(wiring) -> None:
     assert user.role == "tenant_admin"  # SPE ADMIN → tenant_admin（2026-10-08 spec §4.2）
     assert user.department_id == 101
     assert wiring.cred.bound == [("spe_alice", "jwt-spe", db)]  # 登录即绑定（同事务会话）
-    assert db.added and db.flushed >= 1
-    assert db.added and db.added[0].name == "SPE租户-5"  # 部门=SPE 租户（2026-10-08 spec §4.1）
+    assert db.added and db.flushed >= 1 and db.added[0].name == "SPE租户-5"  # 部门=SPE 租户（2026-10-08 spec §4.1）
 
 
 async def test_existing_user_role_and_department_synced(wiring) -> None:
@@ -171,9 +170,18 @@ async def test_credit_query_upstream_error_maps_502(wiring) -> None:
     assert info.value.status_code == 502
 
 
-async def test_missing_tenant_id_falls_back_to_legacy_department(wiring) -> None:
-    """tenantId 缺失：回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）。"""
-    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=None))
+@pytest.mark.parametrize("tenant_id", [None, "", "   "])
+async def test_missing_tenant_id_falls_back_to_legacy_department(wiring, tenant_id) -> None:
+    """tenantId 缺失/为空：回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=tenant_id))
     db = _FakeScalarSession([])
     user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
     assert db.added[0].name == "SPE 外部用户"
+
+
+async def test_zero_tenant_id_uses_tenant_department(wiring) -> None:
+    """tenantId=0 是显式租户值：走租户部门分支（SPE租户-0），不被 falsy 吞入回退。"""
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=0))
+    db = _FakeScalarSession([])
+    user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
+    assert db.added[0].name == "SPE租户-0"
