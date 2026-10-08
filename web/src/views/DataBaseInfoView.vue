@@ -815,7 +815,7 @@ watch(
           showEditModal()
           return
         }
-        await router.replace({ path: '/extensions', query: { tab: 'knowledge' } })
+        await router.replace(backToList())
         return
       }
       await detectVirtualFolders()
@@ -871,8 +871,15 @@ watch(
   { deep: false }
 )
 
+function backToList() {
+  if (route.query.from === 'knowledge') {
+    return { path: '/knowledge' }
+  }
+  return { path: '/extensions', query: { tab: 'knowledge' } }
+}
+
 const backToDatabase = () => {
-  router.push({ path: '/extensions', query: { tab: 'knowledge' } })
+  router.push(backToList())
 }
 
 const copyDatabaseId = async () => {
