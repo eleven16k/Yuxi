@@ -52,7 +52,11 @@ from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limi
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from server.utils.knowledge_response import serialize_knowledge_base, serialize_knowledge_base_list
+from server.utils.knowledge_response import (
+    serialize_accessible_knowledge_base,
+    serialize_knowledge_base,
+    serialize_knowledge_base_list,
+)
 from server.utils.knowledge_permissions import (
     ensure_knowledge_base_permission as _ensure_database_permission,
     require_knowledge_base_manage,
@@ -297,17 +301,11 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
     try:
         databases = await knowledge_base.get_databases_by_uid(current_user.uid)
 
-        accessible = [
-            {
-                "name": db.name,
-                "kb_id": db.kb_id,
-                "description": db.description or "",
-                "created_by": db.created_by,
-                "kb_type": db.kb_type,
-                "supports_documents": knowledge_base.database_type_supports_documents(db.kb_type),
-            }
-            for db in databases
-        ]
+        accessible = []
+        for db in databases:
+            item = serialize_accessible_knowledge_base(db)
+            item["supports_documents"] = knowledge_base.database_type_supports_documents(db.kb_type)
+            accessible.append(item)
 
         return {"databases": accessible}
     except HTTPException:
