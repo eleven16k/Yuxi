@@ -185,3 +185,117 @@ async def test_zero_tenant_id_uses_tenant_department(wiring) -> None:
     db = _FakeScalarSession([])
     user, _ = await svc.login_with_spe(username="alice", password="pw", db=db)
     assert db.added[0].name == "SPE租户-0"
+
+
+# ---------- 租户库 get-or-create 与个人库懒改档（spec §6.1/§6.2） ----------
+
+
+def _kb_summary_row(kb_id, *, access_level="department", department_ids=None, user_uids=None,
+                    created_by="spe_alice", file_count=0):
+    read_scope = {"access_level": access_level,
+                  "department_ids": department_ids or [],
+                  "user_uids": user_uids or []}
+    return SimpleNamespace(
+        kb_id=kb_id, name=kb_id, created_by=created_by, file_count=file_count,
+        share_config={"version": 2, "read_scope": read_scope, "manage_scope": None},
+    )
+
+
+def _fake_kb_runtime(monkeypatch, kbs, created=None):
+    from yuxi.knowledge import runtime as kb_runtime
+
+    async def _get_databases():
+        return list(kbs)
+
+    async def _create(*args, **kwargs):
+        if created is not None:
+            created.append(kwargs)
+        return SimpleNamespace(kb_id="kb_new")
+
+    monkeypatch.setattr(kb_runtime, "knowledge_base",
+                        SimpleNamespace(get_databases=_get_databases, create_database=_create))
+
+
+async def test_ensure_tenant_kb_skips_when_exact_department_kb_exists(monkeypatch):
+    created = []
+    _fake_kb_runtime(monkeypatch, [_kb_summary_row("kb_t", department_ids=[7])], created=created)
+    await svc._ensure_tenant_kb(uid="spe_alice", department_id=7, tenant_id=5)
+    assert created == []
+
+
+async def test_ensure_tenant_kb_creates_department_scoped_kb(monkeypatch):
+    created = []
+    _fake_kb_runtime(monkeypatch, [], created=created)
+    await svc._ensure_tenant_kb(uid="spe_alice", department_id=7, tenant_id=5)
+    assert len(created) == 1
+    assert created[0].get("share_config")["read_scope"]["department_ids"] == [7]
+    assert created[0].get("share_config")["manage_scope"]["department_ids"] == [7]
+
+
+async def test_ensure_tenant_kb_name_conflict_tolerated(monkeypatch):
+    """并发首登：KBNameConflictError → 视为他人已建，静默复用（spec §6.1/§11）。"""
+    from yuxi.knowledge.base import KBNameConflictError
+    from yuxi.knowledge import runtime as kb_runtime
+
+    async def _create(*args, **kwargs):
+        raise KBNameConflictError("知识库名称 'SPE租户-5知识库' 已存在")
+
+    async def _get_databases():
+        return []
+
+    monkeypatch.setattr(kb_runtime, "knowledge_base",
+                        SimpleNamespace(get_databases=_get_databases, create_database=_create))
+    await svc._ensure_tenant_kb(uid="spe_alice", department_id=7, tenant_id=5)  # 不抛即通过
+
+
+async def test_rescope_personal_kbs_only_own_nonempty(monkeypatch):
+    from yuxi.knowledge import runtime as kb_runtime
+    from yuxi.repositories import knowledge_base_repository as kb_repo_mod
+
+    kbs = [
+        _kb_summary_row("kb_mine_full", access_level="user", user_uids=["spe_alice"], file_count=3),
+        _kb_summary_row("kb_mine_empty", access_level="user", user_uids=["spe_alice"], file_count=0),
+        _kb_summary_row("kb_other", access_level="user", user_uids=["spe_bob"], file_count=9),
+        _kb_summary_row("kb_dept", department_ids=[7], file_count=5),
+    ]
+
+    async def _get_databases():
+        return list(kbs)
+
+    monkeypatch.setattr(kb_runtime, "knowledge_base", SimpleNamespace(get_databases=_get_databases))
+
+    updates = []
+
+    class _FakeRepo:
+        async def update(self, kb_id, data):
+            updates.append((kb_id, data))
+
+    monkeypatch.setattr(kb_repo_mod, "KnowledgeBaseRepository", _FakeRepo)
+    await svc._rescope_personal_kbs(uid="spe_alice", department_id=7)
+    assert [u[0] for u in updates] == ["kb_mine_full"]
+    config = updates[0][1]["share_config"]
+    assert config["read_scope"]["department_ids"] == [7] and config["manage_scope"]["department_ids"] == [7]
+
+
+async def test_login_triggers_tenant_kb_provision(wiring) -> None:
+    calls = []
+
+    async def fake_ensure(**kw):
+        calls.append(("ensure", kw["department_id"], kw["tenant_id"]))
+
+    async def fake_rescope(**kw):
+        calls.append(("rescope", kw["department_id"]))
+
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok())
+    wiring.monkeypatch.setattr(svc, "_ensure_tenant_kb", fake_ensure)
+    wiring.monkeypatch.setattr(svc, "_rescope_personal_kbs", fake_rescope)
+    db = _FakeScalarSession([])
+    await svc.login_with_spe(username="alice", password="pw", db=db)
+    assert ("ensure", 101, 5) in calls and ("rescope", 101) in calls
+
+    # tenantId 缺失不触发（无租户语义）
+    calls.clear()
+    wiring.monkeypatch.setattr(svc, "call_spe_login", _spe_ok(tenantId=None))
+    db2 = _FakeScalarSession([])
+    await svc.login_with_spe(username="alice", password="pw", db=db2)
+    assert calls == []

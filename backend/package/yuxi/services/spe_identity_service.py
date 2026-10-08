@@ -81,6 +81,72 @@ async def _resolve_tenant_department_id(db: AsyncSession, tenant_id: Any) -> int
     return department.id
 
 
+async def _ensure_tenant_kb(*, uid: str, department_id: int, tenant_id: Any) -> None:
+    """租户库 get-or-create（spec 2026-10-08 §6.1）：精确单部门匹配即视为已有。
+
+    失败不阻断登录——只记日志，下次登录 get-or-create 自愈。
+    """
+    import logging
+
+    try:
+        from yuxi.knowledge.base import KBNameConflictError
+        from yuxi.knowledge.runtime import knowledge_base
+
+        for kb in await knowledge_base.get_databases():
+            scope = (kb.share_config or {}).get("read_scope") or {}
+            if scope.get("access_level") == "department" and scope.get("department_ids") == [int(department_id)]:
+                return
+
+        try:
+            await knowledge_base.create_database(
+                f"SPE租户-{tenant_id}知识库",
+                f"租户 {tenant_id} 的共享知识库：商品资料、SOP、俄语文案素材（联邦登录自动创建）。",
+                kb_type="milvus",
+                embedding_model_spec="minimax:embo-01",
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
+                    "manage_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
+                },
+                created_by=uid,
+                created_by_department_id=department_id,
+            )
+        except KBNameConflictError:
+            return  # 并发首登：他人已建同名租户库，确定性命名即同一租户库
+    except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
+        logging.getLogger(__name__).warning("联邦登录确保租户知识库失败（uid=%s）：%s", uid, e)
+
+
+async def _rescope_personal_kbs(*, uid: str, department_id: int) -> None:
+    """非空个人库懒改档（spec 2026-10-08 §6.2）：user 档 → 本租户部门档，并入租户知识中心。
+
+    空库交给部署脚本清理；改档不迁移文件。失败不阻断登录。
+    """
+    import logging
+
+    try:
+        from yuxi.knowledge.runtime import knowledge_base
+        from yuxi.permissions import normalize_permission_config
+        from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+        department_scope = {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []}
+        for kb in await knowledge_base.get_databases():
+            scope = (kb.share_config or {}).get("read_scope") or {}
+            is_own_personal = (
+                kb.created_by == uid
+                and scope.get("access_level") == "user"
+                and uid in (scope.get("user_uids") or [])
+            )
+            if not is_own_personal or (kb.file_count or 0) <= 0:
+                continue
+            config = normalize_permission_config(
+                {"version": 2, "read_scope": department_scope, "manage_scope": department_scope}
+            )
+            await KnowledgeBaseRepository().update(kb.kb_id, {"share_config": config})
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("联邦登录个人库改档失败（uid=%s）：%s", uid, e)
+
+
 async def login_with_spe(
     *,
     username: str,
@@ -146,6 +212,11 @@ async def login_with_spe(
         user.role = map_spe_role_to_yuxi(spe_profile.get("role"))
         user.department_id = department_id
     await db.refresh(user)
+
+    # 租户域供给（spec 2026-10-08 §6）：tenantId 缺失回退大部门时无租户语义，跳过
+    if tenant_id is not None and str(tenant_id).strip():
+        await _ensure_tenant_kb(uid=uid, department_id=department_id, tenant_id=tenant_id)
+        await _rescope_personal_kbs(uid=uid, department_id=department_id)
 
     # 登录即绑定：SPE JWT 入 per-user 凭据表，聊天内工具直接可用
     # （同事务写入——新用户行尚未提交，凭据行必须与用户行同进同出）
