@@ -327,3 +327,22 @@ async def test_login_with_spe_no_longer_provisions_kbs(wiring) -> None:
     db = _FakeScalarSession([])
     await svc.login_with_spe(username="alice", password="pw", db=db)
     assert calls == []
+
+
+# ---------- 空个人库清理判定（spec §6.2：只删 0 文件 user 档 spe_ 前缀库） ----------
+
+
+def test_is_empty_spe_personal_kb():
+    row = SimpleNamespace(
+        created_by="spe_alice", file_count=0,
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": ["spe_alice"]}, "manage_scope": None},
+    )
+    assert svc.is_empty_spe_personal_kb(row) is True
+    assert svc.is_empty_spe_personal_kb(SimpleNamespace(created_by="spe_alice", file_count=3, share_config=row.share_config)) is False  # 非空留懒改档
+    assert svc.is_empty_spe_personal_kb(SimpleNamespace(created_by="zwj", file_count=0, share_config=row.share_config)) is False  # 本地账号
+    global_cfg = {"version": 2, "read_scope": {"access_level": "global", "user_uids": []}, "manage_scope": None}
+    assert svc.is_empty_spe_personal_kb(SimpleNamespace(created_by="spe_alice", file_count=0, share_config=global_cfg)) is False  # 官方库
+    # 防护（Task 6 评审提醒）：spe_system 也以 spe_ 开头——系统预建租户库是 department 档，
+    # 靠 access_level == "user" 条件排除；空库清理永不触碰系统租户库。
+    dept_cfg = {"version": 2, "read_scope": {"access_level": "department", "department_ids": [7], "user_uids": []}, "manage_scope": None}
+    assert svc.is_empty_spe_personal_kb(SimpleNamespace(created_by="spe_system", file_count=0, share_config=dept_cfg)) is False  # 系统租户库

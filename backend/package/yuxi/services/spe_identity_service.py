@@ -238,3 +238,18 @@ async def login_with_spe(
     # （同事务写入——新用户行尚未提交，凭据行必须与用户行同进同出）
     await spe_credential_repository.upsert_user_jwt(uid=uid, user_jwt=spe_profile["token"], db=db)
     return user, spe_profile
+
+
+def is_empty_spe_personal_kb(kb: Any) -> bool:
+    """判定「联邦预建空个人库」（spec 2026-10-08 §6.2 清理对象）：
+    created_by 前缀 spe_ + user 档 + 0 文件。非空库留待登录时懒改档。
+
+    注意：spe_system（租户库系统身份）同样以 spe_ 开头——其库为 department 档，
+    靠 access_level == "user" 条件天然排除，本判定永不命中系统租户库。
+    """
+    scope = (kb.share_config or {}).get("read_scope") or {}
+    return (
+        str(kb.created_by or "").startswith(SPE_USER_UID_PREFIX)
+        and scope.get("access_level") == "user"
+        and (kb.file_count or 0) == 0
+    )
