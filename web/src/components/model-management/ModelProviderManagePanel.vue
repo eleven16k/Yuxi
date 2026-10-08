@@ -969,14 +969,6 @@ defineExpose({
           <label class="form-label">
             <span class="api-key-label">
               API Key
-              <a
-                v-if="providerForm.provider_id === 'fluxionai'"
-                href="https://fluxionai.space/register?source=github&campaign=yuxi&promo=YUXI"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                注册送 $7 API 额度
-              </a>
             </span>
             <a-input-password
               v-model:value="providerForm.api_key"

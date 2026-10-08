@@ -308,7 +308,7 @@
                     </a-button>
                   </div>
                   <div class="repo-hint-text">
-                    支持 `owner/repo` 或 GitHub URL。可前往
+                    支持技能仓库地址。可前往
                     <a href="https://skills.sh/" target="_blank" rel="noopener noreferrer"
                       >skills.sh</a
                     >
@@ -580,12 +580,6 @@ const RECOMMENDED_SUITES = [
         source: 'https://modelscope.cn/skills/@vercel-labs/find-skills',
         description: '协助智能体根据用户需求检索并发现可安装的开源 Agent Skills，动态扩展自身能力。'
       },
-      {
-        slug: 'self-improving-agent',
-        name: 'self-improving-agent',
-        source: 'https://github.com/zhaono1/agent-playbook',
-        description: '通用自我进化技能，基于多重记忆架构从经验与错误中持续学习并自我迭代。'
-      }
     ]
   }
 ]
