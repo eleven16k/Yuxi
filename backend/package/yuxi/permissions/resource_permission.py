@@ -44,6 +44,7 @@ DEFAULT_SCOPE = {"access_level": "global", "department_ids": [], "user_uids": []
 KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
         "user": ResourcePermission.READ,
+        "tenant_admin": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }

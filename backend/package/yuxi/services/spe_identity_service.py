@@ -3,7 +3,8 @@
 流程：调 SPE /api/v1/auth/login 验证用户名密码 → 按 `spe_<用户名>` 命名空间
 映射/自动开户 Yuxi 用户（本地密码哈希为不可用随机值——身份源唯一是 SPE，
 每次登录按 SPE 角色同步 Yuxi 角色，映射策略已收紧：SUPER_ADMIN 映射 user，
-租户侧永不获得 superadmin，2026-10-07 修订）→ SPE JWT 写入绑定表（登录即
+ADMIN 映射 tenant_admin（部门限管理），租户侧永不获得 superadmin，
+2026-10-08 修订）→ SPE JWT 写入绑定表（登录即
 绑定，聊天内 SPE 工具直接可用）。
 部门自动归入「SPE 外部用户」。密码永不落盘。
 """
@@ -28,16 +29,17 @@ SPE_DEPARTMENT_NAME = "SPE 外部用户"
 
 
 def map_spe_role_to_yuxi(spe_role: Any) -> str:
-    """SPE 角色 → Yuxi 角色（2026-10-07 收紧：租户侧永不获得 superadmin）。
+    """SPE 角色 → Yuxi 角色（2026-10-08 spec §4.2 修订）。
 
-    容忍大小写与分隔差异：仅 ADMIN（非 SUPER）→ admin；SUPER_ADMIN/未知/缺失
-    一律 user（fail-safe 向下）。平台运营以本地账号使用 superadmin。
+    容忍大小写与分隔差异：仅 ADMIN（非 SUPER）→ tenant_admin（部门限管理，
+    不入 isAdmin 集合、不进平台管理界面）；SUPER_ADMIN/未知/缺失一律 user
+    （fail-safe 向下）。平台运营以本地账号使用 superadmin/admin。
     """
     text = str(spe_role or "").upper()
     if "SUPER" in text:
         return "user"
     if "ADMIN" in text:
-        return "admin"
+        return "tenant_admin"
     return "user"
 
 

@@ -10,14 +10,15 @@ from fastapi import HTTPException
 from yuxi.services import spe_identity_service as svc
 
 
-def test_role_mapping_tightened_no_superadmin_for_tenants() -> None:
-    """租户侧永不获得 superadmin（2026-10-07 收紧，spec §4.2）：
-    SUPER_ADMIN 映射 user；仅 ADMIN→admin；未知/缺失 fail-safe 向下。"""
+def test_role_mapping_tenant_admin_scoped() -> None:
+    """2026-10-08 spec §4.2：SPE ADMIN → tenant_admin（部门限管理，非平台 admin）；
+    SUPER_ADMIN/未知/缺失 fail-safe 向下为 user。"""
     assert svc.map_spe_role_to_yuxi("SUPER_ADMIN") == "user"
     assert svc.map_spe_role_to_yuxi("superadmin") == "user"
-    assert svc.map_spe_role_to_yuxi("ADMIN") == "admin"
-    assert svc.map_spe_role_to_yuxi("ROLE_ADMIN") == "admin"
+    assert svc.map_spe_role_to_yuxi("ADMIN") == "tenant_admin"
+    assert svc.map_spe_role_to_yuxi("ROLE_ADMIN") == "tenant_admin"
     assert svc.map_spe_role_to_yuxi("USER") == "user"
+    assert svc.map_spe_role_to_yuxi("VIEWER") == "user"
     assert svc.map_spe_role_to_yuxi(None) == "user"
     assert svc.map_spe_role_to_yuxi("whatever") == "user"
 
@@ -98,7 +99,7 @@ async def test_first_login_provisions_user_and_binds_jwt(wiring) -> None:
     db = _FakeScalarSession([])  # 部门未命中 → 创建；用户未命中 → 创建
     user, profile = await svc.login_with_spe(username="alice", password="pw", db=db)
     assert user.uid == "spe_alice" and user.username == "alice"
-    assert user.role == "admin"  # SPE ADMIN → Yuxi admin
+    assert user.role == "tenant_admin"  # SPE ADMIN → tenant_admin（2026-10-08 spec §4.2）
     assert user.department_id == 101
     assert wiring.cred.bound == [("spe_alice", "jwt-spe", db)]  # 登录即绑定（同事务会话）
     assert db.added and db.flushed >= 1

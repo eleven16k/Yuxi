@@ -194,3 +194,52 @@ def test_v2_scope_validation_rejects_disallowed_access_level():
             },
             allowed_access_levels={"user"},
         )
+
+
+# ---------- 2026-10-08 spec §5.1：知识库 3 角色 × 3 类库矩阵 ----------
+
+
+def _matrix_user(role, uid="u1", department_id=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(role=role, uid=uid, department_id=department_id)
+
+
+def _matrix_kb(read_scope, manage_scope=None, created_by="someone_else"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        created_by=created_by,
+        share_config={"version": 2, "read_scope": read_scope, "manage_scope": manage_scope},
+    )
+
+
+_GLOBAL = {"access_level": "global", "department_ids": [], "user_uids": []}
+_DEPT1 = {"access_level": "department", "department_ids": [1], "user_uids": []}
+_DEPT2 = {"access_level": "department", "department_ids": [2], "user_uids": []}
+
+
+def test_kb_permission_matrix_official_read_for_all_tenants():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_GLOBAL)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.READ
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.READ
+
+
+def test_kb_permission_matrix_own_tenant_kb():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_DEPT1, manage_scope=_DEPT1)
+    assert resolve_knowledge_base_permission(_matrix_user("superadmin"), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.READ
+
+
+def test_kb_permission_matrix_other_tenant_kb_none():
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+
+    kb = _matrix_kb(_DEPT2, manage_scope=_DEPT2)
+    assert resolve_knowledge_base_permission(_matrix_user("tenant_admin", department_id=1), kb) == ResourcePermission.NONE
+    assert resolve_knowledge_base_permission(_matrix_user("user", department_id=1), kb) == ResourcePermission.NONE
