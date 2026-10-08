@@ -163,7 +163,7 @@
               <!-- 登录表单 -->
               <div v-else class="login-form">
                 <a-form :model="loginForm" @finish="handleLogin" layout="vertical">
-                  <a-form-item class="login-mode-toggle">
+                  <a-form-item v-if="platformBackdoor" class="login-mode-toggle">
                     <a-radio-group v-model:value="speLoginMode" button-style="solid" size="small">
                       <a-radio-button :value="false">平台账号</a-radio-button>
                       <a-radio-button :value="true">SPE 账号</a-radio-button>
@@ -359,7 +359,9 @@ const lockRemainingTime = ref(0)
 const lockCountdown = ref(null)
 
 // 登录表单
-const speLoginMode = ref(false)
+// 默认 SPE 账号登录；平台账号仅 ?platform=1 暗门可达（运维用）
+const platformBackdoor = ref(Boolean(new URLSearchParams(window.location.search).get('platform')))
+const speLoginMode = ref(!platformBackdoor.value)
 const loginForm = reactive({
   loginId: '', // 支持uid或phone_number登录
   password: ''
