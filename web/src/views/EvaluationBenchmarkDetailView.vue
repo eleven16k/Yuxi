@@ -606,13 +606,26 @@ const downloadDataset = async () => {
   }
 }
 
-const backToKnowledgeList = () => router.push({ path: '/extensions', query: { tab: 'knowledge' } })
-const backToKnowledgeEvaluation = () =>
-  router.push({
+// 回退导航按来源分支：知识中心侧回 /knowledge（租户可访问），/extensions 侧保持原路由
+const backToKnowledgeList = () => {
+  if (route.path.startsWith('/knowledge')) {
+    return router.push({ path: '/knowledge' })
+  }
+  return router.push({ path: '/extensions', query: { tab: 'knowledge' } })
+}
+const backToKnowledgeEvaluation = () => {
+  if (route.path.startsWith('/knowledge')) {
+    return router.push({
+      path: `/knowledge/${kbId.value}`,
+      query: { section: 'evaluation' }
+    })
+  }
+  return router.push({
     name: 'ExtensionKnowledgeBaseDetail',
     params: { kbId: kbId.value },
     query: { section: 'evaluation' }
   })
+}
 
 const handleActiveTabChange = async (tab) => {
   if (!tabs.some((item) => item.key === tab)) return

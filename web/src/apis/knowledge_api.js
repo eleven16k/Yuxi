@@ -619,7 +619,7 @@ export const evaluationApi = {
       page: page.toString(),
       page_size: pageSize.toString()
     })
-    return apiAdminGet(`/api/evaluation/databases/${kbId}/datasets/${datasetId}?${params}`)
+    return apiGet(`/api/evaluation/databases/${kbId}/datasets/${datasetId}?${params}`)
   },
 
   deleteDataset: async (datasetId) => {
@@ -655,7 +655,7 @@ export const evaluationApi = {
     else if (params.errorOnly !== undefined) queryParams.append('error_only', params.errorOnly)
 
     const url = `/api/evaluation/databases/${kbId}/runs/${runId}${queryParams.toString() ? '?' + queryParams.toString() : ''}`
-    return apiAdminGet(url)
+    return apiGet(url)
   },
 
   deleteRun: async (kbId, runId) => {

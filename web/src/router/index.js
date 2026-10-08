@@ -177,6 +177,15 @@ const router = createRouter({
             keepAlive: false,
             requiresAuth: true
           }
+        },
+        {
+          path: ':kbId/evaluation/:datasetId',
+          name: 'KnowledgeCenterEvaluationDetail',
+          component: () => import('../views/EvaluationBenchmarkDetailView.vue'),
+          meta: {
+            keepAlive: false,
+            requiresAuth: true
+          }
         }
       ]
     },
