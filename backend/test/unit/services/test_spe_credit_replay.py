@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.services import spe_credit_service as svc
@@ -167,7 +168,12 @@ async def failed_table_db():
 
 @pytest.mark.asyncio
 async def test_load_failed_reports_batches_500_oldest_first(failed_table_db, monkeypatch):
-    """>500 行只取 id 升序头 500 行：order_by id + limit 语义锁定（防全表膨胀拖垮重放）。"""
+    """>500 行只取 id 升序头 500 行：order_by id + limit 语义锁定（防全表膨胀拖垮重放）。
+
+    SQLite 无 ORDER BY 的表扫描通常也按 rowid 升序返回，仅靠行序断言锁不住 ORDER BY——
+    这里用 cursor_execute 事件捕获真实 SQL，直接断言 `ORDER BY credit_report_failed.id`
+    与 `LIMIT`（参数 500）都在语句里。
+    """
     failed_table_db.add_all(CreditReportFailed(id=i, run_id=f"r{i}", payload={}, error=None) for i in range(1, 503))
     await failed_table_db.commit()
 
@@ -177,7 +183,30 @@ async def test_load_failed_reports_batches_500_oldest_first(failed_table_db, mon
 
     monkeypatch.setattr(svc, "pg_manager", SimpleNamespace(get_async_session_context=fake_session_context))
 
-    rows = await svc._load_failed_reports()
+    captured: list[tuple[str, object]] = []
+
+    def capture_sql(connection, cursor, statement, parameters, context, executemany=False):
+        del connection, cursor, context, executemany
+        captured.append((statement, parameters))
+
+    sync_engine = failed_table_db.bind.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", capture_sql)
+    try:
+        rows = await svc._load_failed_reports()
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", capture_sql)
+
+    select_statements = [
+        (statement, parameters)
+        for statement, parameters in captured
+        if "credit_report_failed" in statement and statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert select_statements, "未捕获到失败表 SELECT 查询"
+    statement, parameters = select_statements[0]
+    assert "ORDER BY credit_report_failed.id" in statement
+    assert "LIMIT" in statement.upper()
+    flat_params = list(parameters) if isinstance(parameters, (list, tuple)) else [parameters]
+    assert 500 in flat_params
 
     assert len(rows) == 500
     assert [row.id for row in rows[:3]] == [1, 2, 3]  # id 升序

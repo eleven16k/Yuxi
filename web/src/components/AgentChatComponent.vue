@@ -2464,6 +2464,8 @@ const replyElapsedLabel = computed(() => {
 const estimatedCreditsLi = ref(null)
 const preciseCreditsLi = ref(null)
 let creditRefetchTimers = []
+// 回合令牌：onRunStarted/切线程时递增，使在途旧 Run 的精确值回填全部失效（防串显）。
+let turnCreditToken = 0
 const creditsDisplay = computed(() => {
   const valueLi = preciseCreditsLi.value ?? estimatedCreditsLi.value
   if (valueLi == null) return ''
@@ -2474,17 +2476,18 @@ const cancelCreditRefetchTimers = () => {
   creditRefetchTimers = []
 }
 const resetTurnCreditsDisplay = () => {
+  turnCreditToken += 1
   estimatedCreditsLi.value = null
   preciseCreditsLi.value = null
   cancelCreditRefetchTimers()
 }
 // credits_li 在 end 之后由后端异步上报回填：延迟轮询替换估算值，拿到即停。
-const fetchPreciseCreditsOnce = (threadId, runId) => {
+const fetchPreciseCreditsOnce = (threadId, runId, token) => {
   void agentApi
     .getAgentRun(runId)
     .then((res) => {
-      // 轮询返回时线程已切换则丢弃，不写入别的线程的消耗
-      if (threadId !== currentThreadId.value) return
+      // 回合已翻页（新 Run/切线程）或线程已切换：旧 Run 的在途回填丢弃
+      if (token !== turnCreditToken || threadId !== currentThreadId.value) return
       const precise = res?.run?.credits_li
       if (typeof precise === 'number') {
         preciseCreditsLi.value = precise
@@ -2495,8 +2498,9 @@ const fetchPreciseCreditsOnce = (threadId, runId) => {
 }
 const scheduleCreditRefetch = (threadId, runId) => {
   cancelCreditRefetchTimers()
+  const token = turnCreditToken
   creditRefetchTimers = [3000, 10000].map((delay) =>
-    setTimeout(() => fetchPreciseCreditsOnce(threadId, runId), delay)
+    setTimeout(() => fetchPreciseCreditsOnce(threadId, runId, token), delay)
   )
 }
 const updateReplyElapsedSeconds = () => {
