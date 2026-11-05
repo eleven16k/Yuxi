@@ -2460,13 +2460,45 @@ const replyElapsedLabel = computed(() => {
   return `${minutes}分${seconds % 60}s`
 })
 // SPE 算力积分消耗展示（agent-compute-credit）：优先 run view 精确值，其次 end 事件估算值。
+// 组件级状态：仅在当前查看线程的回合内有效——切线程/新回合即清空，防串显。
 const estimatedCreditsLi = ref(null)
 const preciseCreditsLi = ref(null)
+let creditRefetchTimers = []
 const creditsDisplay = computed(() => {
   const valueLi = preciseCreditsLi.value ?? estimatedCreditsLi.value
   if (valueLi == null) return ''
   return `◇ ${(valueLi / 10).toFixed(2)}`
 })
+const cancelCreditRefetchTimers = () => {
+  creditRefetchTimers.forEach((timer) => clearTimeout(timer))
+  creditRefetchTimers = []
+}
+const resetTurnCreditsDisplay = () => {
+  estimatedCreditsLi.value = null
+  preciseCreditsLi.value = null
+  cancelCreditRefetchTimers()
+}
+// credits_li 在 end 之后由后端异步上报回填：延迟轮询替换估算值，拿到即停。
+const fetchPreciseCreditsOnce = (threadId, runId) => {
+  void agentApi
+    .getAgentRun(runId)
+    .then((res) => {
+      // 轮询返回时线程已切换则丢弃，不写入别的线程的消耗
+      if (threadId !== currentThreadId.value) return
+      const precise = res?.run?.credits_li
+      if (typeof precise === 'number') {
+        preciseCreditsLi.value = precise
+        cancelCreditRefetchTimers()
+      }
+    })
+    .catch(() => {})
+}
+const scheduleCreditRefetch = (threadId, runId) => {
+  cancelCreditRefetchTimers()
+  creditRefetchTimers = [3000, 10000].map((delay) =>
+    setTimeout(() => fetchPreciseCreditsOnce(threadId, runId), delay)
+  )
+}
 const updateReplyElapsedSeconds = () => {
   if (!replyStartedAt) return
   replyElapsedSeconds.value = Math.floor((Date.now() - replyStartedAt) / 1000)
@@ -2828,6 +2860,8 @@ onUnmounted(() => {
     clearTimeout(sendCooldownTimer)
     sendCooldownTimer = null
   }
+  // 积分消耗轮询定时器清理（agent-compute-credit）
+  cancelCreditRefetchTimers()
   // 清理所有线程状态
   resetOnGoingConv()
   for (const entry of agentPanelPreviewCache.values()) {
@@ -3126,25 +3160,18 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
     bindMessageRequestRun(threadMessages.value[threadId], requestId, runId)
     chatThreadsStore.setThreadStatus(threadId, 'loading')
     // 新 Run 开始时清空上一轮的积分消耗展示（agent-compute-credit）。
-    estimatedCreditsLi.value = null
-    preciseCreditsLi.value = null
+    resetTurnCreditsDisplay()
   },
-  onRunEnded: ({ runId, payload }) => {
-    // end 事件先给估算值；run view 的 credits_li 精确值到位后替换（agent-compute-credit）。
+  onRunEnded: ({ threadId, runId, payload }) => {
+    // 串显守卫（agent-compute-credit）：仅当前查看线程的 end 事件才写入组件级消耗状态。
+    if (threadId !== currentThreadId.value) return
+    // end 事件先给估算值；credits_li 由后端 end 后异步回填，延迟轮询替换（agent-compute-credit）。
     const estimated = payload?.estimatedCreditsLi
     if (typeof estimated === 'number' && estimated >= 0) {
       estimatedCreditsLi.value = estimated
     }
     if (!runId) return
-    void agentApi
-      .getAgentRun(runId)
-      .then((res) => {
-        const precise = res?.run?.credits_li
-        if (typeof precise === 'number') {
-          preciseCreditsLi.value = precise
-        }
-      })
-      .catch(() => {})
+    scheduleCreditRefetch(threadId, runId)
   }
 })
 const { stopAllRequestStreams, cancelRequest, resumeQueuedRequests, continueQueue, steerRequest } =
@@ -3244,6 +3271,8 @@ const selectChat = async (chatId) => {
 
   if (previousThreadId !== chatId) {
     resetAgentPanelState()
+    // 积分消耗是线程内回合状态：切线程即清空，防止串显（agent-compute-credit）。
+    resetTurnCreditsDisplay()
   }
 
   try {

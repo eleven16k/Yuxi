@@ -398,7 +398,8 @@ async def report_run_usage_best_effort(
 async def _load_failed_reports() -> list[CreditReportFailed]:
     """读取待重放的失败行（超管重放入口；读取失败向上抛，让调用方看到真实故障）。
 
-    LIMIT 500 防失败表膨胀后单次重放拖垮出站链路；溢出部分下次重放继续（按 id 升序）。
+    LIMIT 500 防失败表膨胀后单次重放拖垮出站链路；按 id 升序取头批，溢出部分下次重放继续。
+    已知权衡：头批持续失败会阻塞后续批次（队头阻塞），由超管人工清理/修复头批后重放干预。
     """
     async with pg_manager.get_async_session_context() as db:
         result = await db.execute(select(CreditReportFailed).order_by(CreditReportFailed.id).limit(500))

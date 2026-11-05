@@ -1,17 +1,27 @@
 """失败表重放测试（agent-compute-credit 卡2，spec §5.5 超管可重放）。
 
 契约：
-1. replay_failed_reports：读 credit_report_failed 全部行 → 逐行用已存 payload 调 _post_deduct
+1. replay_failed_reports：读 credit_report_failed 每批 500 行（id 升序）→ 逐行用已存 payload
+   调 _post_deduct；头批持续失败会阻塞后续批次（队头阻塞是管理端可人工干预的可接受权衡：
+   清理/修复头批失败行后再重放）
 2. 成功 → 删该行 + 回填 credits_li；失败 → 行保留（error 更新），继续下一行
 3. 空表 → 返回 {"replayed": 0, "failed": 0}
 
 mock 边界：_load_failed_reports/_drop_failed_report/_mark_failed_report_error 为持久化 helper，
 _post_deduct 为出站边界；被测编排逻辑（增删、计数、回填）不 mock。
+批次语义（order_by id + limit 500）由 test_load_failed_reports_batches_500_oldest_first
+在 sqlite 上跑真实 _load_failed_reports 锁定。
 """
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from yuxi.services import spe_credit_service as svc
+from yuxi.storage.postgres.models_business import Base, CreditReportFailed
 
 
 def _failed_row(row_id: int, run_id: str, error: str | None = None) -> SimpleNamespace:
@@ -142,3 +152,33 @@ def _async_return(value):
         return value
 
     return _inner
+
+
+@pytest_asyncio.fixture()
+async def failed_table_db():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as db:
+        yield db
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_load_failed_reports_batches_500_oldest_first(failed_table_db, monkeypatch):
+    """>500 行只取 id 升序头 500 行：order_by id + limit 语义锁定（防全表膨胀拖垮重放）。"""
+    failed_table_db.add_all(CreditReportFailed(id=i, run_id=f"r{i}", payload={}, error=None) for i in range(1, 503))
+    await failed_table_db.commit()
+
+    @asynccontextmanager
+    async def fake_session_context():
+        yield failed_table_db
+
+    monkeypatch.setattr(svc, "pg_manager", SimpleNamespace(get_async_session_context=fake_session_context))
+
+    rows = await svc._load_failed_reports()
+
+    assert len(rows) == 500
+    assert [row.id for row in rows[:3]] == [1, 2, 3]  # id 升序
+    assert rows[-1].id == 500  # 头批截止，501/502 留待下一批
