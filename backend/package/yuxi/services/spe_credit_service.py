@@ -51,8 +51,11 @@ def gate_threshold_li() -> int:
 
 
 def gate_disabled() -> bool:
-    """SPE_CREDIT_GATE_DISABLED=1 时一键关闭阈值闸。"""
-    return os.getenv("SPE_CREDIT_GATE_DISABLED", "").strip() in ("1", "true")
+    """SPE_CREDIT_GATE_DISABLED=1/true/yes（大小写不敏感，别名对齐 octop）时一键关闭阈值闸。
+
+    仅关闸：上报照常（漏报=少收钱，billing 不受 kill-switch 影响）。
+    """
+    return os.getenv("SPE_CREDIT_GATE_DISABLED", "").strip().lower() in ("1", "true", "yes")
 
 
 async def _spe_base_url() -> str | None:
@@ -119,8 +122,13 @@ async def balance_li(*, uid: str) -> int | None:
 
 
 def invalidate_balance_cache() -> None:
-    """扣减成功后清空余额缓存，让下一次过闸读到新余额。"""
+    """扣减成功但结算响应无 balanceAfter 时清空余额缓存，让下一次过闸重拉。"""
     _balance_cache.clear()
+
+
+def update_balance_cache(uid: str, balance_after: int) -> None:
+    """结算响应增量刷新余额缓存（spec UI：结算后余额更鲜，60s TTL 内零余额请求）。"""
+    _balance_cache[uid] = (time.monotonic(), int(balance_after))
 
 
 async def ensure_run_allowed(*, uid: str, role: str | None) -> None:
@@ -301,8 +309,10 @@ def _normalize_run_usage(run_usage: dict[str, Any]) -> dict[str, dict[str, int]]
     }
 
 
-async def _post_deduct_once(*, base: str, jwt: str, payload: dict[str, Any]) -> tuple[bool, int | None, str | None]:
-    """单次上报；返回 (ok, chargedLi, error)。"""
+async def _post_deduct_once(
+    *, base: str, jwt: str, payload: dict[str, Any]
+) -> tuple[bool, int | None, int | None, str | None]:
+    """单次上报；返回 (ok, chargedLi, balanceAfter, error)。"""
     try:
         async with httpx.AsyncClient(timeout=SPE_SESSION_TIMEOUT_SECONDS) as client:
             res = await client.post(
@@ -311,29 +321,31 @@ async def _post_deduct_once(*, base: str, jwt: str, payload: dict[str, Any]) -> 
                 headers={"Authorization": f"Bearer {jwt}"},
             )
         if res.status_code != 200:
-            return False, None, f"HTTP {res.status_code}"
-        charged = res.json().get("chargedLi")
+            return False, None, None, f"HTTP {res.status_code}"
+        data = res.json()
+        charged = data.get("chargedLi")
         if not isinstance(charged, int):
-            return False, None, "响应缺 chargedLi"
-        return True, charged, None
+            return False, None, None, "响应缺 chargedLi"
+        balance_after = data.get("balanceAfter")
+        return True, charged, balance_after if isinstance(balance_after, int) else None, None
     except Exception as exc:
-        return False, None, f"{type(exc).__name__}: {exc}"
+        return False, None, None, f"{type(exc).__name__}: {exc}"
 
 
-async def _post_deduct(*, uid: str, payload: dict[str, Any]) -> tuple[int | None, str | None]:
-    """带重试的上报（refId 幂等由 SPE 承接）；终败返回 (None, 最后一次错误)。"""
+async def _post_deduct(*, uid: str, payload: dict[str, Any]) -> tuple[int | None, int | None, str | None]:
+    """带重试的上报（refId 幂等由 SPE 承接）；终败返回 (None, None, 最后一次错误)。"""
     base = await _spe_base_url()
     if not base:
-        return None, "SPE base_url 未配置"
+        return None, None, "SPE base_url 未配置"
     jwt = await get_user_jwt(uid)
     if not jwt:
         return None, "用户 SPE 凭据缺失"
     delays = _REPORT_RETRY_DELAYS_SECONDS
     last_error = "unknown"
     for attempt in range(len(delays)):
-        ok, charged, error = await _post_deduct_once(base=base, jwt=jwt, payload=payload)
+        ok, charged, balance_after, error = await _post_deduct_once(base=base, jwt=jwt, payload=payload)
         if ok:
-            return charged, None
+            return charged, balance_after, None
         last_error = error or "unknown"
         logger.warning(
             "SPE 算力上报失败（第 %s/%s 次）: refId=%s err=%s",
@@ -344,7 +356,7 @@ async def _post_deduct(*, uid: str, payload: dict[str, Any]) -> tuple[int | None
         )
         if attempt < len(delays) - 1:
             await asyncio.sleep(delays[attempt])
-    return None, last_error
+    return None, None, last_error
 
 
 async def _persist_run_credits(run_id: str, credits_li: int) -> None:
@@ -365,7 +377,7 @@ async def _persist_failed_report(run_id: str, payload: dict[str, Any], error: An
 async def report_run_usage(*, uid: str, role: str | None, run_id: str, usage_by_model: dict[str, Any]) -> None:
     """Run 结束上报（可重试）：buckets_from_run_usage 提取分模型桶（token_usage.run.models 结构）；
     refId=agent-yuxi-run-<run_id>；重试 (5,30,120)s；成功 _persist_run_credits 回填 +
-    invalidate_balance_cache；终败 _persist_failed_report。"""
+    balanceAfter 增量刷新余额缓存（缺失时回退失效）；终败 _persist_failed_report。"""
     if role == "superadmin":
         return
     buckets = buckets_from_run_usage(usage_by_model)
@@ -377,10 +389,13 @@ async def report_run_usage(*, uid: str, role: str | None, run_id: str, usage_by_
         "operationType": "agent_compute",
         "usage": buckets,
     }
-    charged, error = await _post_deduct(uid=uid, payload=payload)
+    charged, balance_after, error = await _post_deduct(uid=uid, payload=payload)
     if charged is not None:
         await _persist_run_credits(run_id, charged)
-        invalidate_balance_cache()
+        if balance_after is not None:
+            update_balance_cache(uid, balance_after)
+        else:
+            invalidate_balance_cache()
         return
     await _persist_failed_report(run_id, payload, error)
 
@@ -433,7 +448,8 @@ async def _run_owner_uid(run_id: str) -> str | None:
 
 async def replay_failed_reports(*, uid: str) -> dict[str, int]:
     """超管重放 credit_report_failed（spec §5.5）：逐行用已存 payload 调 _post_deduct；
-    成功删行 + 回填 credits_li + 失效余额缓存；失败行保留并更新 error 后继续下一行。
+    成功删行 + 回填 credits_li + balanceAfter 增量刷新属主余额缓存（缺失时回退失效）；
+    失败行保留并更新 error 后继续下一行。
 
     计费归属：SPE 按 Bearer JWT 解析租户，重放必须取 run 属主（原用户）的凭据；
     run 已不存在时无法归属租户，保留行不发起出站请求。uid 参数仅为触发者（超管），用于审计日志。
@@ -448,7 +464,7 @@ async def replay_failed_reports(*, uid: str) -> dict[str, int]:
             failed += 1
             await _mark_failed_report_error(row, "run 不存在，无法归属租户")
             continue
-        charged, error = await _post_deduct(uid=owner_uid, payload=payload)
+        charged, balance_after, error = await _post_deduct(uid=owner_uid, payload=payload)
         if charged is None:
             failed += 1
             await _mark_failed_report_error(row, error)
@@ -456,7 +472,9 @@ async def replay_failed_reports(*, uid: str) -> dict[str, int]:
         await _persist_run_credits(row.run_id, charged)
         await _drop_failed_report(row)
         replayed += 1
-    if replayed:
-        invalidate_balance_cache()
+        if balance_after is not None:
+            update_balance_cache(owner_uid, balance_after)
+        else:
+            invalidate_balance_cache()
     logger.info("SPE 失败表重放完成: by=%s rows=%s replayed=%s failed=%s", uid, len(rows), replayed, failed)
     return {"replayed": replayed, "failed": failed}

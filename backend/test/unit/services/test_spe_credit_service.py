@@ -74,11 +74,22 @@ async def test_gate_no_jwt_allows(fresh, spe_env, httpx_mock, monkeypatch):
     assert httpx_mock.get_requests() == []
 
 
-async def test_gate_disabled_env_allows_without_http(fresh, spe_env, httpx_mock, monkeypatch):
-    monkeypatch.setenv("SPE_CREDIT_GATE_DISABLED", "1")
+@pytest.mark.parametrize("disabled_value", ["1", "true", "TRUE", "Yes", "yes"])
+async def test_gate_disabled_env_allows_without_http(fresh, spe_env, httpx_mock, monkeypatch, disabled_value):
+    """kill-switch 别名对齐 octop：1/true/yes 大小写不敏感。"""
+    monkeypatch.setenv("SPE_CREDIT_GATE_DISABLED", disabled_value)
     monkeypatch.setattr(svc, "get_user_jwt", _async_return("jwt-1"))
     await svc.ensure_run_allowed(uid="u1", role="user")
     assert httpx_mock.get_requests() == []
+
+
+async def test_gate_disabled_false_value_still_gates(fresh, spe_env, httpx_mock, monkeypatch):
+    """非关闸取值（如 false）不触发 kill-switch：闸门照常走余额检查。"""
+    monkeypatch.setenv("SPE_CREDIT_GATE_DISABLED", "false")
+    monkeypatch.setattr(svc, "get_user_jwt", _async_return("jwt-1"))
+    httpx_mock.add_response(url="http://spe.test/api/v1/credit/balance", json={"creditBalance": 500})
+    await svc.ensure_run_allowed(uid="u1", role="user")  # 放行：走了余额检查
+    assert len(httpx_mock.get_requests()) == 1
 
 
 async def test_gate_credential_store_failure_allows(fresh, spe_env, httpx_mock, monkeypatch):
@@ -297,13 +308,42 @@ async def test_report_superadmin_skipped(fresh, spe_env, httpx_mock):
     assert httpx_mock.get_requests() == []
 
 
-async def test_report_success_invalidates_balance_cache(fresh, spe_env, httpx_mock, monkeypatch):
+async def test_report_success_refreshes_balance_cache_with_balance_after(
+    fresh, spe_env, httpx_mock, monkeypatch
+):
+    """结算响应增量刷新余额（联合终审）：deduct 的 balanceAfter 直接写缓存，
+    再次过闸不再发余额请求。"""
     monkeypatch.setattr(svc, "get_user_jwt", _async_return("jwt-1"))
     httpx_mock.add_response(url="http://spe.test/api/v1/credit/balance", json={"creditBalance": 500})
     await svc.ensure_run_allowed(uid="u1", role="user")
     httpx_mock.add_response(
         url="http://spe.test/api/v1/credit/external/deduct",
         json={"chargedLi": 315, "balanceAfter": 185, "replay": False, "detail": []},
+    )
+    monkeypatch.setattr(svc, "_persist_run_credits", _async_return(None))
+    await svc.report_run_usage(
+        uid="u1",
+        role="user",
+        run_id="r1",
+        usage_by_model={
+            "models": {"m": {"usage": {"input_tokens": 10, "output_tokens": 1}, "cache_read_input_tokens": 0}}
+        },
+    )
+    # balanceAfter=185 已入缓存：读余额零 HTTP，且值就是结算响应值
+    assert await svc.balance_li(uid="u1") == 185
+    await svc.ensure_run_allowed(uid="u1", role="user")
+    balance_calls = [r for r in httpx_mock.get_requests() if r.url.path.endswith("/balance")]
+    assert len(balance_calls) == 1
+
+
+async def test_report_success_without_balance_after_invalidates(fresh, spe_env, httpx_mock, monkeypatch):
+    """响应缺 balanceAfter 时回退为缓存失效：下次过闸重新拉余额。"""
+    monkeypatch.setattr(svc, "get_user_jwt", _async_return("jwt-1"))
+    httpx_mock.add_response(url="http://spe.test/api/v1/credit/balance", json={"creditBalance": 500})
+    await svc.ensure_run_allowed(uid="u1", role="user")
+    httpx_mock.add_response(
+        url="http://spe.test/api/v1/credit/external/deduct",
+        json={"chargedLi": 315, "replay": False, "detail": []},
     )
     httpx_mock.add_response(url="http://spe.test/api/v1/credit/balance", json={"creditBalance": 185})
     monkeypatch.setattr(svc, "_persist_run_credits", _async_return(None))
@@ -315,7 +355,6 @@ async def test_report_success_invalidates_balance_cache(fresh, spe_env, httpx_mo
             "models": {"m": {"usage": {"input_tokens": 10, "output_tokens": 1}, "cache_read_input_tokens": 0}}
         },
     )
-    # 扣减后缓存失效：再次过闸必须重新拉余额
     await svc.ensure_run_allowed(uid="u1", role="user")
     balance_calls = [r for r in httpx_mock.get_requests() if r.url.path.endswith("/balance")]
     assert len(balance_calls) == 2

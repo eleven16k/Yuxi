@@ -51,6 +51,8 @@ async def test_replay_success_deletes_row_and_backfills_credits(monkeypatch):
     monkeypatch.setattr(svc, "_run_owner_uid", _async_return("owner-alice"))
     deduct_calls = []
     monkeypatch.setattr(svc, "_post_deduct", _capture_post(deduct_calls))
+    balance_writes = []
+    monkeypatch.setattr(svc, "update_balance_cache", _capture_pair(balance_writes))
 
     persisted, dropped, errors = [], [], []
     monkeypatch.setattr(svc, "_persist_run_credits", _capture(persisted))
@@ -65,13 +67,15 @@ async def test_replay_success_deletes_row_and_backfills_credits(monkeypatch):
     assert errors == []
     # 计费归属：必须用 run 属主（原用户）的凭据重放，而不是操作重放的超管
     assert [call["uid"] for call in deduct_calls] == ["owner-alice", "owner-alice"]
+    # 结算响应 balanceAfter 写属主余额缓存（联合终审：增量刷新）
+    assert balance_writes == [("owner-alice", 4200), ("owner-alice", 4200)]
 
 
 async def test_replay_failure_keeps_row_and_updates_error(monkeypatch):
     rows = [_failed_row(7, "r7", error=None)]
     monkeypatch.setattr(svc, "_load_failed_reports", _async_return(rows))
     monkeypatch.setattr(svc, "_run_owner_uid", _async_return("owner-alice"))
-    monkeypatch.setattr(svc, "_post_deduct", _async_return((None, "HTTP 503")))
+    monkeypatch.setattr(svc, "_post_deduct", _async_return((None, None, "HTTP 503")))
 
     persisted, dropped, errors = [], [], []
     monkeypatch.setattr(svc, "_persist_run_credits", _capture(persisted))
@@ -93,7 +97,7 @@ async def test_replay_mixed_rows_continue_after_failure(monkeypatch):
     monkeypatch.setattr(svc, "_load_failed_reports", _async_return(rows))
     monkeypatch.setattr(svc, "_run_owner_uid", _async_return("owner-bob"))
 
-    outcomes = iter([(None, "HTTP 500"), (88, None)])
+    outcomes = iter([(None, None, "HTTP 500"), (88, 500, None)])
 
     async def fake_post_deduct(*, uid, payload):
         return next(outcomes)
@@ -136,7 +140,15 @@ async def test_replay_missing_run_keeps_row(monkeypatch):
 def _capture_post(seen: list):
     async def _inner(*, uid, payload):
         seen.append({"uid": uid, "payload": payload})
-        return (315, None)
+        return (315, 4200, None)
+
+    return _inner
+
+
+def _capture_pair(seen: list):
+    # update_balance_cache 是同步函数，mock 也必须同步——async 版本从未 await，append 永不执行。
+    def _inner(*args):
+        seen.append(args)
 
     return _inner
 
