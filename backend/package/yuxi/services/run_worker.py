@@ -7,7 +7,7 @@ import json
 import os
 import time
 import uuid
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -45,6 +45,7 @@ from yuxi.services.scheduled_agent_service import (
     recover_scheduled_dispatches,
 )
 from yuxi.services.skills.shared import init_builtin_skills
+from yuxi.services import spe_credit_service as spe_credit
 from yuxi.services.task_queue_service import (
     TASK_RECONCILIATION_HEALTH_KEY,
     TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
@@ -755,8 +756,31 @@ async def _finish_run(
     if transition.status in TERMINAL_RUN_STATUSES:
         committed_run = await _get_run(run_id)
         await _release_runtime_before_terminal_event(committed_run or run)
+    # 算力估算与上报（agent-compute-credit）：失败/异常不影响 run 终态。
+    end_payload_extra: dict = {}
+    run_models: dict = {}
+    if isinstance(token_usage, dict) and isinstance(token_usage.get("run"), dict):
+        run_models = token_usage["run"]
+    with suppress(Exception):
+        mirror = await spe_credit.price_mirror(uid=str(current_user.uid))
+        if mirror is not None:
+            normalized = spe_credit._normalize_run_usage(run_models)
+            estimate = spe_credit.estimate_credits_li(mirror, normalized)
+            if estimate is not None:
+                end_payload_extra["estimatedCreditsLi"] = round(estimate, 1)
     if publish_end and transition.changed and transition.status:
-        await _append_end_event(run_id, transition.status, thread_id=thread_id, payload={"chunk": chunk})
+        end_payload = {"chunk": chunk, **end_payload_extra}
+        await _append_end_event(run_id, transition.status, thread_id=thread_id, payload=end_payload)
+    if run_models:
+        # fire-and-forget：上报与估算解耦（镜像拉取失败不漏账），链路自身吞异常，绝不拖累 run 终态。
+        asyncio.create_task(
+            spe_credit.report_run_usage_best_effort(
+                uid=str(current_user.uid),
+                role=getattr(current_user, "role", None),
+                run_id=run_id,
+                usage_by_model=run_models,
+            )
+        )
     return transition
 
 
