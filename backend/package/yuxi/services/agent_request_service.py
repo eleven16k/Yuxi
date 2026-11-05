@@ -34,6 +34,7 @@ from yuxi.services.agent_request_queue_service import (
 )
 from yuxi.services.agent_run_service import create_agent_run_input_message, enqueue_agent_run, resolve_agent_run_config
 from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.spe_credit_service import ensure_run_allowed
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
 from yuxi.storage.postgres.models_business import AgentRunRequest, User
@@ -296,6 +297,8 @@ async def _persist_request(
         conversation_thread_id=thread_id,
         uid=uid_str,
     )
+    # SPE 算力积分阈值闸（agent-compute-credit）：superadmin 豁免；SPE 故障放行不阻断。
+    await ensure_run_allowed(uid=uid_str, role=getattr(current_user, "role", None))
     latest_run = await AgentRunRepository(db).get_latest_chat_or_resume_run(
         uid=uid_str,
         agent_slug=agent_slug,

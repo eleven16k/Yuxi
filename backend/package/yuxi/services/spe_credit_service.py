@@ -123,26 +123,33 @@ def invalidate_balance_cache() -> None:
 
 async def ensure_run_allowed(*, uid: str, role: str | None) -> None:
     """Run 提交阈值闸：余额<=阈值 403（code=credit_insufficient）；superadmin 豁免；
-    SPE 故障/无凭据/gate_disabled 放行（漏报=少收钱，不阻断聊天）。"""
+    SPE 故障/无凭据/gate_disabled 放行（漏报=少收钱，不阻断聊天）。
+    SPE 链路（含凭据存储）任何非 HTTPException 故障一律放行。"""
     if role == "superadmin":
         return
     if gate_disabled():
         return
-    jwt = await get_user_jwt(uid)
-    if not jwt:
+    try:
+        jwt = await get_user_jwt(uid)
+        if not jwt:
+            return
+        balance = await _cached_balance_li(uid=uid)
+        if balance is None:
+            return
+        if balance <= gate_threshold_li():
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "credit_insufficient",
+                    "message": f"SPE 积分余额不足（{balance} 厘），请先在 SPE 平台充值",
+                    "balanceLi": balance,
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("SPE 积分闸内部故障，放行: uid=%s err=%s", uid, exc)
         return
-    balance = await _cached_balance_li(uid=uid)
-    if balance is None:
-        return
-    if balance <= gate_threshold_li():
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "credit_insufficient",
-                "message": f"SPE 积分余额不足（{balance} 厘），请先在 SPE 平台充值",
-                "balanceLi": balance,
-            },
-        )
 
 
 async def price_mirror(*, uid: str) -> dict[str, Any] | None:

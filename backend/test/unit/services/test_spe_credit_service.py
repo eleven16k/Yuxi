@@ -81,6 +81,17 @@ async def test_gate_disabled_env_allows_without_http(fresh, spe_env, httpx_mock,
     assert httpx_mock.get_requests() == []
 
 
+async def test_gate_credential_store_failure_allows(fresh, spe_env, httpx_mock, monkeypatch):
+    """凭据存储故障（如 DB 不可用）也必须放行：SPE 链路任何故障不阻断聊天。"""
+
+    async def boom(uid):
+        raise RuntimeError("credential store down")
+
+    monkeypatch.setattr(svc, "get_user_jwt", boom)
+    await svc.ensure_run_allowed(uid="u1", role="user")  # 放行不抛
+    assert httpx_mock.get_requests() == []
+
+
 async def test_gate_balance_cached_60s(fresh, spe_env, httpx_mock, monkeypatch):
     monkeypatch.setattr(svc, "get_user_jwt", _async_return("jwt-1"))
     httpx_mock.add_response(url="http://spe.test/api/v1/credit/balance", json={"creditBalance": 500})
