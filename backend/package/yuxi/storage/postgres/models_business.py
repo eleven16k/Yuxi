@@ -1190,6 +1190,7 @@ class AgentRun(Base):
     output_message_id = Column(Integer, nullable=True, comment="Output message ID")
     input_payload = Column(JSON, nullable=False, default=dict, comment="Original input payload")
     token_usage = Column(JSON_VALUE, nullable=False, default=dict, comment="Run token usage grouped by model")
+    credits_li = Column(Integer, nullable=True, comment="SPE 算力扣减回填（厘）；None=未上报/上报失败待重放")
     langfuse_trace_id = Column(String(64), nullable=True, comment="Langfuse trace ID")
     error_type = Column(String(64), nullable=True, comment="Error type")
     error_message = Column(Text, nullable=True, comment="Error message")
@@ -1411,3 +1412,15 @@ Index(
     AgentRunRequest.created_at,
     AgentRunRequest.id,
 )
+
+
+class CreditReportFailed(Base):
+    """算力上报 SPE 失败的重放队列（agent-compute-credit）：超管可重放；漏报=少收钱，不阻断聊天。"""
+
+    __tablename__ = "credit_report_failed"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(64), index=True, nullable=False, comment="关联 AgentRun.id")
+    payload = Column(JSON_VALUE, nullable=False, default=dict, comment="上报请求体（platform/refId/usage）")
+    error = Column(Text, nullable=True, comment="最后一次上报失败原因")
+    created_at = Column(DateTime, nullable=True, server_default=func.now(), comment="落表时间")

@@ -23,9 +23,23 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 10
+BUSINESS_SCHEMA_VERSION = 15
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
+# agent-compute-credit 卡2：agent_runs.credits_li 精确扣减回填 + credit_report_failed 上报失败重放队列。
+CREDIT_REPORT_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS credits_li INTEGER",
+    """
+    CREATE TABLE IF NOT EXISTS credit_report_failed (
+        id SERIAL PRIMARY KEY,
+        run_id VARCHAR(64) NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        error TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_credit_report_failed_run_id ON credit_report_failed (run_id)",
+)
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
@@ -541,6 +555,28 @@ class PostgresManager(metaclass=SingletonMeta):
                     INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
                     VALUES ('business', 10, CURRENT_TIMESTAMP)
                     ON CONFLICT (domain) DO UPDATE SET version = 10, applied_at = EXCLUDED.applied_at
+                """)
+            )
+
+    async def upgrade_business_schema_v14_to_v15(self) -> None:
+        """算力积分（agent-compute-credit）：agent_runs.credits_li 精确扣减回填
+        + credit_report_failed 上报失败重放队列。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            version = await conn.scalar(
+                text(f"SELECT version FROM {SCHEMA_VERSION_TABLE} WHERE domain = 'business' FOR UPDATE")
+            )
+            if version == 15:
+                return
+            if version not in (None, 2, 7, 8, 9, 10, 11, 12, 13, 14):
+                raise RuntimeError(f"Unsupported business schema version: {version}")
+            for statement in CREDIT_REPORT_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+            await conn.execute(
+                text(f"""
+                    INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
+                    VALUES ('business', 15, CURRENT_TIMESTAMP)
+                    ON CONFLICT (domain) DO UPDATE SET version = 15, applied_at = EXCLUDED.applied_at
                 """)
             )
 

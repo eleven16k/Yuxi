@@ -125,7 +125,7 @@ async def main() -> None:
                 "business",
                 business_version,
                 BUSINESS_SCHEMA_VERSION,
-                upgrade_from=(2, 7, 8, 9),
+                upgrade_from=(2, 7, 8, 9, 10, 11, 12, 13, 14),
             )
             knowledge_version = versions.get("knowledge")
             _require_supported_version(
@@ -153,6 +153,8 @@ async def main() -> None:
                 await pg_manager.upgrade_agent_resource_selection()
             if business_version in {None, 2, 7, 8, 9}:
                 await pg_manager.upgrade_user_spe_credentials()
+            if business_version in {None, 2, 7, 8, 9, 10, 11, 12, 13, 14}:
+                await pg_manager.upgrade_business_schema_v14_to_v15()
 
             if knowledge_version is None:
                 await pg_manager.create_knowledge_tables()
