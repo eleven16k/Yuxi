@@ -75,6 +75,8 @@ RUN_LEASE_SECONDS = 120
 RUN_HEARTBEAT_SECONDS = 30
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
+# SPE 算力上报后台任务强引用（agent-compute-credit）：防 Task 被回收导致漏报。
+_credit_report_tasks: set[asyncio.Task] = set()
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 _TASK_RECONCILIATION_TASK_KEY = "durable_task_reconciliation_task"
 
@@ -773,7 +775,8 @@ async def _finish_run(
         await _append_end_event(run_id, transition.status, thread_id=thread_id, payload=end_payload)
     if run_models:
         # fire-and-forget：上报与估算解耦（镜像拉取失败不漏账），链路自身吞异常，绝不拖累 run 终态。
-        asyncio.create_task(
+        # 保存强引用防 Task 被回收导致漏报（asyncio 文档惯例）。
+        report_task = asyncio.create_task(
             spe_credit.report_run_usage_best_effort(
                 uid=str(current_user.uid),
                 role=getattr(current_user, "role", None),
@@ -781,6 +784,8 @@ async def _finish_run(
                 usage_by_model=run_models,
             )
         )
+        _credit_report_tasks.add(report_task)
+        report_task.add_done_callback(_credit_report_tasks.discard)
     return transition
 
 

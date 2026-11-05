@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import update
+from sqlalchemy import delete, select, update
 
 from yuxi.agents.toolkits.spe.client import SPE_SESSION_TIMEOUT_SECONDS
 from yuxi.config.options import spe_agent_opts
@@ -391,3 +391,66 @@ async def report_run_usage_best_effort(
         await report_run_usage(uid=uid, role=role, run_id=run_id, usage_by_model=usage_by_model)
     except Exception:
         logger.exception("SPE 算力上报意外失败: run_id=%s", run_id)
+
+
+async def _load_failed_reports() -> list[CreditReportFailed]:
+    """读取全部上报失败行（超管重放入口；读取失败向上抛，让调用方看到真实故障）。"""
+    async with pg_manager.get_async_session_context() as db:
+        result = await db.execute(select(CreditReportFailed).order_by(CreditReportFailed.id))
+        return list(result.scalars().all())
+
+
+async def _drop_failed_report(row: CreditReportFailed) -> None:
+    """重放成功后删除失败行；删除失败吞异常（下次重放幂等重试）。"""
+    with contextlib.suppress(Exception):
+        async with pg_manager.get_async_session_context() as db:
+            await db.execute(delete(CreditReportFailed).where(CreditReportFailed.id == row.id))
+            await db.commit()
+
+
+async def _mark_failed_report_error(row: CreditReportFailed, error: Any) -> None:
+    """重放仍失败时更新该行 error（保留行）；更新失败吞异常。"""
+    with contextlib.suppress(Exception):
+        async with pg_manager.get_async_session_context() as db:
+            await db.execute(
+                update(CreditReportFailed).where(CreditReportFailed.id == row.id).values(error=str(error or "")[:2000])
+            )
+            await db.commit()
+
+
+async def _run_owner_uid(run_id: str) -> str | None:
+    """按 run_id 查回属主 uid（重放计费必须归属原用户租户，而不是操作重放的超管）。"""
+    async with pg_manager.get_async_session_context() as db:
+        result = await db.execute(select(AgentRun.uid).where(AgentRun.id == run_id))
+        return result.scalar_one_or_none()
+
+
+async def replay_failed_reports(*, uid: str) -> dict[str, int]:
+    """超管重放 credit_report_failed（spec §5.5）：逐行用已存 payload 调 _post_deduct；
+    成功删行 + 回填 credits_li + 失效余额缓存；失败行保留并更新 error 后继续下一行。
+
+    计费归属：SPE 按 Bearer JWT 解析租户，重放必须取 run 属主（原用户）的凭据；
+    run 已不存在时无法归属租户，保留行不发起出站请求。uid 参数仅为触发者（超管），用于审计日志。
+    """
+    replayed = 0
+    failed = 0
+    rows = await _load_failed_reports()
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        owner_uid = await _run_owner_uid(row.run_id)
+        if owner_uid is None:
+            failed += 1
+            await _mark_failed_report_error(row, "run 不存在，无法归属租户")
+            continue
+        charged, error = await _post_deduct(uid=owner_uid, payload=payload)
+        if charged is None:
+            failed += 1
+            await _mark_failed_report_error(row, error)
+            continue
+        await _persist_run_credits(row.run_id, charged)
+        await _drop_failed_report(row)
+        replayed += 1
+    if replayed:
+        invalidate_balance_cache()
+    logger.info("SPE 失败表重放完成: by=%s rows=%s replayed=%s failed=%s", uid, len(rows), replayed, failed)
+    return {"replayed": replayed, "failed": failed}

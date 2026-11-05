@@ -34,8 +34,8 @@ from yuxi.services.agent_request_queue_service import (
 )
 from yuxi.services.agent_run_service import create_agent_run_input_message, enqueue_agent_run, resolve_agent_run_config
 from yuxi.services.input_message_service import AgentRunInputMessage
-from yuxi.services.spe_credit_service import ensure_run_allowed
 from yuxi.services.project_service import create_implicit_project
+from yuxi.services.spe_credit_service import ensure_run_allowed
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
 from yuxi.storage.postgres.models_business import AgentRunRequest, User
 from yuxi.utils.datetime_utils import utc_now_naive
