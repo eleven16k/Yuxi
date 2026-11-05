@@ -20,6 +20,7 @@ from server.routers.model_provider_router import model_providers
 from server.routers.project_router import projects
 from server.routers.scheduled_agent_router import scheduled_agents
 from server.routers.skill_router import skills, user_skills
+from server.routers.spe_credit_router import spe_credit
 from server.routers.system_router import system
 from server.routers.system_task_router import tasks
 from server.routers.tool_router import tools
@@ -38,6 +39,7 @@ router.include_router(agent_invocation_eval_router)  # /api/agent-invocation/eva
 router.include_router(chat)  # /api/chat/* 对话线程、消息历史与附件
 router.include_router(projects)  # /api/projects* 项目创建与选择
 router.include_router(scheduled_agents)  # /api/scheduled-tasks* 用户自建 Agent 定时任务
+router.include_router(spe_credit)  # /api/agent/spe-credit* SPE 算力积分余额与重放
 
 # 管理与工作台接口：后台任务、权限域以及工具体系配置。
 router.include_router(dashboard)  # /api/dashboard/* 仪表盘聚合数据

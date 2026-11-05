@@ -149,6 +149,7 @@
                 <span v-if="replyElapsedLabel" class="generating-elapsed">{{
                   replyElapsedLabel
                 }}</span>
+                <span v-if="creditsDisplay" class="generating-elapsed">｜ 已消耗 {{ creditsDisplay }}</span>
               </div>
             </div>
           </div>
@@ -2453,6 +2454,14 @@ const replyElapsedLabel = computed(() => {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}分${seconds % 60}s`
 })
+// SPE 算力积分消耗展示（agent-compute-credit）：优先 run view 精确值，其次 end 事件估算值。
+const estimatedCreditsLi = ref(null)
+const preciseCreditsLi = ref(null)
+const creditsDisplay = computed(() => {
+  const valueLi = preciseCreditsLi.value ?? estimatedCreditsLi.value
+  if (valueLi == null) return ''
+  return `◇ ${(valueLi / 10).toFixed(2)}`
+})
 const updateReplyElapsedSeconds = () => {
   if (!replyStartedAt) return
   replyElapsedSeconds.value = Math.floor((Date.now() - replyStartedAt) / 1000)
@@ -3111,6 +3120,26 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
     bindMessageRequestRun(Object.values(chunks).flat(), requestId, runId)
     bindMessageRequestRun(threadMessages.value[threadId], requestId, runId)
     chatThreadsStore.setThreadStatus(threadId, 'loading')
+    // 新 Run 开始时清空上一轮的积分消耗展示（agent-compute-credit）。
+    estimatedCreditsLi.value = null
+    preciseCreditsLi.value = null
+  },
+  onRunEnded: ({ runId, payload }) => {
+    // end 事件先给估算值；run view 的 credits_li 精确值到位后替换（agent-compute-credit）。
+    const estimated = payload?.estimatedCreditsLi
+    if (typeof estimated === 'number' && estimated >= 0) {
+      estimatedCreditsLi.value = estimated
+    }
+    if (!runId) return
+    void agentApi
+      .getAgentRun(runId)
+      .then((res) => {
+        const precise = res?.run?.credits_li
+        if (typeof precise === 'number') {
+          preciseCreditsLi.value = precise
+        }
+      })
+      .catch(() => {})
   }
 })
 const { stopAllRequestStreams, cancelRequest, resumeQueuedRequests, continueQueue, steerRequest } =

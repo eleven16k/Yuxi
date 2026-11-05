@@ -1,4 +1,4 @@
-import { apiAdminGet } from './base'
+import { apiAdminGet, apiGet } from './base'
 
 /**
  * Dashboard API模块
@@ -141,6 +141,14 @@ export const dashboardApi = {
       console.error('批量获取统计数据失败:', error)
       throw error
     }
+  },
+
+  /**
+   * 获取当前用户 SPE 积分余额（agent-compute-credit）
+   * @returns {Promise<Object>} - { balanceLi: number | null }（厘；null=SPE 不可用/无凭据）
+   */
+  fetchSpeCredit: () => {
+    return apiGet('/api/agent/spe-credit')
   },
 
   /**

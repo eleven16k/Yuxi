@@ -16,6 +16,13 @@
           />
           <!-- <div class="user-role-badge" :class="userRoleClass"></div> -->
         </div>
+        <span
+          v-if="speBalanceLabel"
+          class="spe-credit-badge"
+          :class="{ 'spe-credit-badge-warning': speBalanceLow }"
+          title="SPE 算力积分余额（1 积分 = 10 厘）"
+          >◇ {{ speBalanceLabel }}</span
+        >
         <div v-if="showRole" class="user-name">{{ userStore.username }}</div>
         <div v-if="slots.actions" class="user-info-actions">
           <slot name="actions" />
@@ -66,10 +73,11 @@
 </template>
 
 <script setup>
-import { computed, inject, useSlots } from 'vue'
+import { computed, inject, onMounted, ref, useSlots } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useInfoStore } from '@/stores/info'
+import { dashboardApi } from '@/apis/dashboard_api'
 import DebugComponent from '@/components/DebugComponent.vue'
 import { message } from 'ant-design-vue'
 import { Sun, Moon, LogOut, Settings, Terminal } from '@lucide/vue'
@@ -87,6 +95,24 @@ const slots = useSlots()
 const { openSettingsModal } = inject('settingsModal', {})
 
 const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
+
+// SPE 算力积分余额徽标（agent-compute-credit）：SPE 不可用/无凭据时不渲染；
+// 余额 <= 200 厘（阈值 100 厘 × 2）转警示色。
+const speBalanceLi = ref(null)
+const speBalanceLabel = computed(() =>
+  speBalanceLi.value == null ? '' : (speBalanceLi.value / 10).toFixed(2)
+)
+const speBalanceLow = computed(() => speBalanceLi.value != null && speBalanceLi.value <= 200)
+
+onMounted(async () => {
+  if (!userStore.isLoggedIn) return
+  try {
+    const res = await dashboardApi.fetchSpeCredit()
+    speBalanceLi.value = typeof res?.balanceLi === 'number' ? res.balanceLi : null
+  } catch {
+    speBalanceLi.value = null
+  }
+})
 
 defineProps({
   showRole: {
@@ -182,6 +208,22 @@ const openProfile = () => {
   display: inline-flex;
   align-items: center;
   margin-left: auto;
+}
+
+.spe-credit-badge {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-600);
+  background: var(--gray-100);
+  border-radius: 10px;
+  padding: 1px 8px;
+  white-space: nowrap;
+
+  &.spe-credit-badge-warning {
+    color: var(--color-warning-500);
+    background: rgba(245, 158, 11, 0.12);
+  }
 }
 
 .user-avatar {

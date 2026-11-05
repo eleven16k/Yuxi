@@ -136,7 +136,8 @@ export function useAgentRunStream({
   streamSmoother,
   onInterruptDetected = null,
   onTerminalDetected = null,
-  onRunStarted = null
+  onRunStarted = null,
+  onRunEnded = null
 }) {
   const saveActiveRunSnapshot = (threadId, runId, lastSeq = '0-0') => {
     if (!threadId || !runId) return
@@ -401,6 +402,10 @@ export function useAgentRunStream({
         })
 
         if (event === 'end') {
+          // agent-compute-credit：透出 end payload 附加键（如 estimatedCreditsLi）。
+          if (typeof onRunEnded === 'function') {
+            onRunEnded({ threadId, runId, payload })
+          }
           sawTerminalEvent = true
           if (
             terminalStatus === RUN_INTERRUPTED_STATUS ||
