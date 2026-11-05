@@ -335,6 +335,7 @@ const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
 const configStore = useConfigStore()
+const userStore = useUserStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 
@@ -572,20 +573,26 @@ const uploadModeOptions = computed(() => [
       h('span', { class: 'option-text' }, '上传文件夹')
     ])
   },
-  {
-    value: 'url',
-    label: h('div', { class: 'segmented-option' }, [
-      h(Link, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '解析 URL')
-    ])
-  },
-  {
-    value: 'workspace',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderOpen, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '个人空间')
-    ])
-  }
+  // 「解析 URL」与「个人空间」依赖 admin-only 后端接口（fetch-url / import-workspace），
+  // 仅平台管理员可见，避免租户侧触发 403
+  ...(userStore.isAdmin
+    ? [
+        {
+          value: 'url',
+          label: h('div', { class: 'segmented-option' }, [
+            h(Link, { size: 16, class: 'option-icon' }),
+            h('span', { class: 'option-text' }, '解析 URL')
+          ])
+        },
+        {
+          value: 'workspace',
+          label: h('div', { class: 'segmented-option' }, [
+            h(FolderOpen, { size: 16, class: 'option-icon' }),
+            h('span', { class: 'option-text' }, '个人空间')
+          ])
+        }
+      ]
+    : [])
 ])
 
 watch(uploadMode, (val) => {
@@ -1130,7 +1137,6 @@ const handleDrop = () => {}
 // 已移除文件夹上传逻辑
 
 const getAuthHeaders = () => {
-  const userStore = useUserStore()
   return userStore.getAuthHeaders()
 }
 

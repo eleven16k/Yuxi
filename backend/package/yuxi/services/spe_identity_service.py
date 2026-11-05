@@ -3,9 +3,10 @@
 流程：调 SPE /api/v1/auth/login 验证用户名密码 → 按 `spe_<用户名>` 命名空间
 映射/自动开户 Yuxi 用户（本地密码哈希为不可用随机值——身份源唯一是 SPE，
 每次登录按 SPE 角色同步 Yuxi 角色，映射策略已收紧：SUPER_ADMIN 映射 user，
-租户侧永不获得 superadmin，2026-10-07 修订）→ SPE JWT 写入绑定表（登录即
+ADMIN 映射 tenant_admin（部门限管理），租户侧永不获得 superadmin，
+2026-10-08 修订）→ SPE JWT 写入绑定表（登录即
 绑定，聊天内 SPE 工具直接可用）。
-部门自动归入「SPE 外部用户」。密码永不落盘。
+部门按 SPE tenantId get-or-create（部门=SPE 租户）；tenantId 缺失回退旧「SPE 外部用户」大部门。密码永不落盘。
 """
 
 from __future__ import annotations
@@ -25,52 +26,29 @@ from yuxi.utils.auth_utils import AuthUtils
 
 SPE_USER_UID_PREFIX = "spe_"
 SPE_DEPARTMENT_NAME = "SPE 外部用户"
+SPE_TENANT_DEPARTMENT_PREFIX = "SPE租户-"
+# 租户库创建者系统身份：避免首登成员经 created_by 拥有者分支获得越角色写权（spec §6.1）
+SPE_TENANT_KB_CREATOR = "spe_system"
 
 
 def map_spe_role_to_yuxi(spe_role: Any) -> str:
-    """SPE 角色 → Yuxi 角色（2026-10-07 收紧：租户侧永不获得 superadmin）。
+    """SPE 角色 → Yuxi 角色（2026-10-08 spec §4.2 修订）。
 
-    容忍大小写与分隔差异：仅 ADMIN（非 SUPER）→ admin；SUPER_ADMIN/未知/缺失
-    一律 user（fail-safe 向下）。平台运营以本地账号使用 superadmin。
+    容忍大小写与分隔差异：仅 ADMIN（非 SUPER）→ tenant_admin（部门限管理，
+    不入 isAdmin 集合、不进平台管理界面）；SUPER_ADMIN/未知/缺失一律 user
+    （fail-safe 向下）。平台运营以本地账号使用 superadmin/admin。
     """
     text = str(spe_role or "").upper()
     if "SUPER" in text:
         return "user"
     if "ADMIN" in text:
-        return "admin"
+        return "tenant_admin"
     return "user"
 
 
 def spe_uid(username: str) -> str:
     """SPE 用户名 → Yuxi uid（命名空间隔离，防与本地 uid 冲突）。"""
     return f"{SPE_USER_UID_PREFIX}{username}"
-
-
-async def _provision_personal_kb(uid: str, display_name: str) -> None:
-    """联邦开户自动预建私有知识库（P1#05）。
-
-    read_scope=user 仅本人可见；embedding 走系统已配的 minimax:embo-01。
-    失败不阻断登录——只记日志，卖家可经知识中心/管理员补救。
-    """
-    import logging
-
-    try:
-        from yuxi.knowledge.runtime import knowledge_base
-
-        await knowledge_base.create_database(
-            f"{display_name}的知识库",
-            f"联邦开户自动创建的私有知识库（{uid}）：类目笔记、供应商档案、俄语文案素材。",
-            kb_type="milvus",
-            embedding_model_spec="minimax:embo-01",
-            share_config={
-                "version": 2,
-                "read_scope": {"access_level": "user", "user_uids": [uid]},
-                "manage_scope": None,
-            },
-            created_by=uid,
-        )
-    except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
-        logging.getLogger(__name__).warning("联邦开户预建个人知识库失败（uid=%s）：%s", uid, e)
 
 
 async def _resolve_department_id(db: AsyncSession) -> int:
@@ -82,6 +60,112 @@ async def _resolve_department_id(db: AsyncSession) -> int:
     db.add(department)
     await db.flush()
     return department.id
+
+
+async def _resolve_tenant_department_id(db: AsyncSession, tenant_id: Any) -> int:
+    """按 SPE tenantId get-or-create 租户部门（部门=SPE 租户，spec 2026-10-08 §4.1）。
+
+    tenantId 缺失/为空时回退旧「SPE 外部用户」大部门（无租户语义，fail-safe）；
+    0 是显式租户值，不吞入回退。
+    """
+    if tenant_id is None:
+        return await _resolve_department_id(db)
+    value = str(tenant_id).strip()
+    if not value:
+        return await _resolve_department_id(db)
+    name = f"{SPE_TENANT_DEPARTMENT_PREFIX}{value}"
+    department = await db.scalar(select(Department).where(Department.name == name))
+    if department is not None:
+        return department.id
+    department = Department(name=name, description=f"SPE 租户 {value}（联邦登录自动创建）")
+    db.add(department)
+    await db.flush()
+    return department.id
+
+
+async def _ensure_tenant_kb(*, uid: str, department_id: int, tenant_id: Any) -> None:
+    """租户库 get-or-create（spec 2026-10-08 §6.1）：精确单部门匹配即视为已有。
+
+    失败不阻断登录——只记日志，下次登录 get-or-create 自愈。
+    """
+    import logging
+
+    try:
+        from yuxi.knowledge.base import KBNameConflictError
+        from yuxi.knowledge.runtime import knowledge_base
+
+        for kb in await knowledge_base.get_databases():
+            scope = (kb.share_config or {}).get("read_scope") or {}
+            if scope.get("access_level") == "department" and scope.get("department_ids") == [int(department_id)]:
+                return
+
+        try:
+            await knowledge_base.create_database(
+                f"SPE租户-{tenant_id}知识库",
+                f"租户 {tenant_id} 的共享知识库：商品资料、SOP、俄语文案素材（联邦登录自动创建）。",
+                kb_type="milvus",
+                embedding_model_spec="minimax:embo-01",
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
+                    "manage_scope": {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []},
+                },
+                created_by=SPE_TENANT_KB_CREATOR,
+                created_by_department_id=department_id,
+            )
+        except KBNameConflictError:
+            # 同名库已存在：可能是并发首登（确定性命名即同租户库），也可能是
+            # scope 不匹配的同名库挡住了供给——后者会让租户永远建不出库，必须留痕
+            logging.getLogger(__name__).warning(
+                "租户知识库供给撞名（tenant_id=%s, department_id=%s）——若该库 scope 不匹配请人工核查",
+                tenant_id, department_id,
+            )
+            return
+    except Exception as e:  # noqa: BLE001 —— 开户不被 KB 故障拖垮
+        logging.getLogger(__name__).warning("联邦登录确保租户知识库失败（uid=%s）：%s", uid, e)
+
+
+async def _rescope_personal_kbs(*, uid: str, department_id: int) -> None:
+    """非空个人库懒改档（spec 2026-10-08 §6.2）：user 档 → 本租户部门档，并入租户知识中心。
+
+    空库交给部署脚本清理；改档不迁移文件。失败不阻断登录。
+    """
+    import logging
+
+    try:
+        from yuxi.knowledge.runtime import knowledge_base
+        from yuxi.permissions import normalize_permission_config
+        from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+        department_scope = {"access_level": "department", "department_ids": [int(department_id)], "user_uids": []}
+        for kb in await knowledge_base.get_databases():
+            scope = (kb.share_config or {}).get("read_scope") or {}
+            is_own_personal = (
+                kb.created_by == uid
+                and scope.get("access_level") == "user"
+                and uid in (scope.get("user_uids") or [])
+            )
+            if not is_own_personal or (kb.file_count or 0) <= 0:
+                continue
+            config = normalize_permission_config(
+                {"version": 2, "read_scope": department_scope, "manage_scope": department_scope}
+            )
+            await KnowledgeBaseRepository().update(kb.kb_id, {"share_config": config})
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("联邦登录个人库改档失败（uid=%s）：%s", uid, e)
+
+
+async def ensure_tenant_provisioning(*, uid: str, department_id: int | None, tenant_id: Any) -> None:
+    """租户域供给入口（spec 2026-10-08 §6）：必须在登录事务提交之后调用。
+
+    部门行由登录事务创建——供给若先于 commit 执行，独立会话落库的租户库可能
+    指向回滚后消失的部门（并发首登孤儿库，撞名静默自阻塞），故由路由在
+    commit 后调用本入口。tenantId 缺失/为空或无部门时跳过（无租户语义）。
+    """
+    if tenant_id is None or not str(tenant_id).strip() or department_id is None:
+        return
+    await _ensure_tenant_kb(uid=uid, department_id=department_id, tenant_id=tenant_id)
+    await _rescope_personal_kbs(uid=uid, department_id=department_id)
 
 
 async def login_with_spe(
@@ -126,7 +210,16 @@ async def login_with_spe(
         )
 
     spe_username = spe_profile.get("username") or username.strip()
+    tenant_id = spe_profile.get("tenantId")
     uid = spe_uid(spe_username)
+    if uid == SPE_TENANT_KB_CREATOR:
+        # 终审修复：spe_system 是系统预建租户库的拥有者身份——若放行该用户名，
+        # 其 created_by 拥有者分支将命中所有系统预建租户库（越权接管）。
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该用户名为系统保留字，请联系平台管理员",
+        )
+    department_id = await _resolve_tenant_department_id(db, tenant_id)
     user = await db.scalar(select(User).where(User.uid == uid, User.is_deleted == 0))
     if user is None:
         # username 唯一列：与本地同名时加后缀（登录标识是 uid/手机号，不受影响）
@@ -138,18 +231,32 @@ async def login_with_spe(
             uid=uid,
             password_hash=AuthUtils.hash_password(secrets.token_urlsafe(32)),  # 不可用：身份源唯一是 SPE
             role=map_spe_role_to_yuxi(spe_profile.get("role")),
-            department_id=await _resolve_department_id(db),
+            department_id=department_id,
         )
         db.add(user)
         await db.flush()
-        # 开户即预建个人知识库（created_by 无外键，独立会话写入不依赖本事务提交）
-        await _provision_personal_kb(uid, display_name)
     else:
-        # 身份源拥有角色：每次登录同步，防止 SPE 侧降权后 Yuxi 侧残留
+        # 身份源拥有角色与租户归属：每次登录同步，防止 SPE 侧降权/换租后 Yuxi 侧残留
         user.role = map_spe_role_to_yuxi(spe_profile.get("role"))
+        user.department_id = department_id
     await db.refresh(user)
 
     # 登录即绑定：SPE JWT 入 per-user 凭据表，聊天内工具直接可用
     # （同事务写入——新用户行尚未提交，凭据行必须与用户行同进同出）
     await spe_credential_repository.upsert_user_jwt(uid=uid, user_jwt=spe_profile["token"], db=db)
     return user, spe_profile
+
+
+def is_empty_spe_personal_kb(kb: Any) -> bool:
+    """判定「联邦预建空个人库」（spec 2026-10-08 §6.2 清理对象）：
+    created_by 前缀 spe_ + user 档 + 0 文件。非空库留待登录时懒改档。
+
+    注意：spe_system（租户库系统身份）同样以 spe_ 开头——其库为 department 档，
+    靠 access_level == "user" 条件天然排除，本判定永不命中系统租户库。
+    """
+    scope = (kb.share_config or {}).get("read_scope") or {}
+    return (
+        str(kb.created_by or "").startswith(SPE_USER_UID_PREFIX)
+        and scope.get("access_level") == "user"
+        and (kb.file_count or 0) == 0
+    )

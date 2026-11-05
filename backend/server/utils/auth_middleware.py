@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import APIKey, User
+from yuxi.repositories.agent_repository import ADMIN_ROLES
 from yuxi.utils.datetime_utils import utc_now_naive
 
 from yuxi.utils.auth_utils import AuthUtils
@@ -122,7 +123,7 @@ async def get_required_user(user: User | None = Depends(get_current_user)):
 
 # 获取管理员用户
 async def get_admin_user(current_user: User = Depends(get_required_user)):
-    if current_user.role not in ["admin", "superadmin"]:
+    if current_user.role not in ADMIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="需要管理员权限",

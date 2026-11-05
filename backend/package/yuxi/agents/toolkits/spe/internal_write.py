@@ -1,8 +1,8 @@
 """内化写工具：kb_upload / yuxi_research（原桥 yuxi 通道 HTTP 外呼）。
 
 kb_upload：知识上传五步链（上传→登记→解析→轮询→入库），upload 步走
-`services/knowledge_file_service`（路由同源）；授权按 T04 定案——运行身份
-必须 admin/superadmin 且对目标库有 MANAGE（双重门，fail-closed）；opKey 用
+`services/knowledge_file_service`（路由同源）；授权按 2026-10-08 spec §7——
+对目标库有 MANAGE 即可（角色门移除）；不可见=不存在零探测保持；opKey 用
 内容 sha256 前 16 位而非全文，kbId 必进键；同内容去重映射 YUXI_DUPLICATE_CONTENT；
 解析轮询超时不报错，回执注明索引未触发。
 
@@ -59,17 +59,6 @@ def _research_request_id(question: str) -> str:
     return f"spe-research-{digest}"
 
 
-async def _user_role(uid: str) -> str | None:
-    """加载运行用户的角色（user 行不存在视为未认证）。"""
-    from sqlalchemy import select
-
-    from yuxi.storage.postgres.manager import pg_manager
-    from yuxi.storage.postgres.models_business import User
-
-    async with pg_manager.get_async_session_context() as db:
-        return await db.scalar(select(User.role).where(User.uid == uid, User.is_deleted == 0))
-
-
 _block_seq = itertools.count(1)
 
 
@@ -107,14 +96,6 @@ async def _kb_upload_impl(runtime: ToolRuntime, **params: Any) -> dict[str, Any]
     if len(content) > _KB_UPLOAD_MAX_CONTENT_CHARS:
         raise ToolException(format_spe_failure("INVALID_ARGS", "kb_upload 参数 content 超过 1MB（1,000,000 字符）上限"))
 
-    # T04 双重门：admin 角色 + 对目标库 MANAGE；不可见=不存在零探测
-    from yuxi.repositories.agent_repository import ADMIN_ROLES
-
-    role = await _user_role(uid)
-    if role not in ADMIN_ROLES:
-        raise ToolException(
-            format_spe_failure("BIZ_FORBIDDEN", f"kb_upload 需要管理员权限（当前角色 {role or '未知'}）")
-        )
     summaries = await visible_kb_summaries(runtime)
     target = next((s for s in summaries if s["kb_id"] == kb_id), None)
     if target is None:
@@ -127,22 +108,31 @@ async def _kb_upload_impl(runtime: ToolRuntime, **params: Any) -> dict[str, Any]
     receipt_args = {"kbId": kb_id, "filename": filename, "contentHash": content_hash}
 
     from yuxi.services.knowledge_file_service import KnowledgeFileDuplicateError, upload_knowledge_file_bytes
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
     from yuxi.services.task_service import tasker
 
     async def _run() -> tuple[str, dict[str, Any]]:
         file_bytes = content.encode("utf-8")
         try:
+            # 配额边缘检查在 upload_knowledge_file_bytes 内（同内容去重之后、上传之前）
             uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=filename, file_bytes=file_bytes)
         except KnowledgeFileDuplicateError as e:
             raise SpeToolError(
                 "YUXI_DUPLICATE_CONTENT",
                 f"该文件内容已存在，无需重复上传——用 kb_list/yuxi_kb_search 确认；确需重传先删除或修改（{e}）",
             ) from e
+        except TenantKBQuotaExceededError as e:
+            raise SpeToolError("BIZ_FORBIDDEN", str(e)) from e
 
         minio_path = uploaded["minio_path"]
-        added = await _kb().add_file_record(
-            kb_id, minio_path, {"content_hashes": {minio_path: uploaded["content_hash"]}}, operator_id=uid
-        )
+        try:
+            # 扼制点（add_file_record 权威判定，spec 2026-10-08 §8）拒绝时统一映射
+            # BIZ_FORBIDDEN——write_receipts 对异常原样冒泡，不映射会以裸异常逃到工具层
+            added = await _kb().add_file_record(
+                kb_id, minio_path, {"content_hashes": {minio_path: uploaded["content_hash"]}}, operator_id=uid
+            )
+        except TenantKBQuotaExceededError as e:
+            raise SpeToolError("BIZ_FORBIDDEN", str(e)) from e
         file_id = _first_success_file_id(added)
         if file_id is None:
             raise SpeToolError("TOOL_UPSTREAM_ERROR", "知识文件登记失败（无成功条目）")

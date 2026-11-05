@@ -36,6 +36,7 @@ from yuxi.permissions import (
     ResourcePermission,
     resolve_knowledge_base_permission,
 )
+from yuxi.repositories.agent_repository import ADMIN_ROLES
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import tasker
@@ -52,7 +53,11 @@ from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limi
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from server.utils.knowledge_response import serialize_knowledge_base, serialize_knowledge_base_list
+from server.utils.knowledge_response import (
+    serialize_accessible_knowledge_base,
+    serialize_knowledge_base,
+    serialize_knowledge_base_list,
+)
 from server.utils.knowledge_permissions import (
     ensure_knowledge_base_permission as _ensure_database_permission,
     require_knowledge_base_manage,
@@ -162,8 +167,45 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
 
 async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
     """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
-    if kb_id and getattr(current_user, "role", None):
+    if kb_id:
         await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
+
+
+def _require_upload_role(kb_id: str | None, current_user: User) -> None:
+    """无 kb_id 的直传（不入库）仅平台管理员可用（spec 2026-10-08 §7）；带 kb_id 走资源权限门。"""
+    if kb_id:
+        return
+    if current_user.role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="请指定目标知识库后再上传")
+
+
+def _clamp_share_config_for_non_platform_admin(payload: dict, current_user: User) -> None:
+    """非平台管理员不得把知识库共享范围放大到 global、user 档或本部门之外（spec §3/§8、终审修复）。
+
+    global 档 = 官方域（全体租户可见 + is_official 配额豁免），仅平台管理员可设置；
+    department 档不得包含本租户之外的部门 ID，防止跨租户渗透；
+    user 档为未启用保留档（个人库走 D1、租户库=department 档），整体仅平台管理员可设置，
+    防止经 user_uids 塞他租户 uid 渗透授出（终审复核补丁）。
+    """
+    share_config = payload.get("share_config")
+    if not isinstance(share_config, dict) or current_user.role in ADMIN_ROLES:
+        return
+    for scope_key in ("read_scope", "manage_scope"):
+        scope = share_config.get(scope_key)
+        if not isinstance(scope, dict):
+            continue
+        if scope.get("access_level") == "global":
+            raise HTTPException(status_code=403, detail="全局共享仅平台管理员可设置")
+        if scope.get("access_level") == "user":
+            raise HTTPException(status_code=403, detail="指定用户共享仅平台管理员可设置")
+        if scope.get("access_level") == "department":
+            for department_id in scope.get("department_ids") or []:
+                try:
+                    beyond_own_tenant = int(department_id) != current_user.department_id
+                except (TypeError, ValueError):
+                    beyond_own_tenant = True  # 非法部门标识按越权处理（fail-closed）
+                if beyond_own_tenant:
+                    raise HTTPException(status_code=403, detail="部门共享范围不能超出本租户")
 
 
 async def _ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
@@ -289,17 +331,11 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
     try:
         databases = await knowledge_base.get_databases_by_uid(current_user.uid)
 
-        accessible = [
-            {
-                "name": db.name,
-                "kb_id": db.kb_id,
-                "description": db.description or "",
-                "created_by": db.created_by,
-                "kb_type": db.kb_type,
-                "supports_documents": knowledge_base.database_type_supports_documents(db.kb_type),
-            }
-            for db in databases
-        ]
+        accessible = []
+        for db in databases:
+            item = serialize_accessible_knowledge_base(db)
+            item["supports_documents"] = knowledge_base.database_type_supports_documents(db.kb_type)
+            accessible.append(item)
 
         return {"databases": accessible}
     except HTTPException:
@@ -419,6 +455,7 @@ async def update_database_info(
         f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
         f"additional_params={data.additional_params}, share_config={data.share_config}"
     )
+    _clamp_share_config_for_non_platform_admin(data.model_dump(), current_user)
     try:
         update_llm_model_spec = "llm_model_spec" in data.model_fields_set
 
@@ -771,6 +808,14 @@ async def add_uploaded_documents(
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
     logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
     await _ensure_database_supports_documents(kb_id, "文档添加")
+
+    # 边缘快速失败（仅文件数维度）；权威判定在 add_file_record 扼制点（spec 2026-10-08 §8）
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError, ensure_tenant_kb_quota
+
+    try:
+        await ensure_tenant_kb_quota(kb_id, incoming_count=len(payload.items))
+    except TenantKBQuotaExceededError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
 
     params = _ensure_document_params(payload.params)
     content_type = params.get("content_type", "file")
@@ -1644,11 +1689,13 @@ async def import_workspace_files(
 async def upload_file(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ):
     """上传文件"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
+
+    _require_upload_role(kb_id, current_user)
 
     if kb_id:
         await _require_manage_permission_if_kb_id(kb_id, current_user)
@@ -1665,26 +1712,31 @@ async def upload_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # 配额边缘检查在 upload_knowledge_file_bytes 内（同内容去重之后、MinIO 上传之前）
+    from yuxi.services.knowledge_quota_service import TenantKBQuotaExceededError
+
     try:
         uploaded = await upload_knowledge_file_bytes(kb_id=kb_id, filename=file.filename, file_bytes=file_bytes)
     except KnowledgeFileDuplicateError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except KnowledgeFileTypeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TenantKBQuotaExceededError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "File successfully uploaded", **uploaded}
 
 
 @knowledge.get("/files/supported-types")
-async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
+async def get_supported_file_types(current_user: User = Depends(get_required_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
 
 
 @knowledge.post("/files/markdown")
-async def mark_it_down(file: UploadFile = File(...), current_user: User = Depends(get_admin_user)):
-    """调用统一 Parser 将文件解析为 markdown，需要管理员权限"""
+async def mark_it_down(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
+    """调用统一 Parser 将文件解析为 markdown"""
     import tempfile
 
     if not file.filename:

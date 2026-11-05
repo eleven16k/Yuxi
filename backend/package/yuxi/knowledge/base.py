@@ -227,6 +227,13 @@ class KnowledgeBase(ABC):
             except Exception as exc:
                 logger.warning(f"Failed to stat file size from MinIO for {item}: {exc}")
 
+        # 租户库兜底配额扼制点（spec 2026-10-08 §8）：size 已知的最早点、写入之前做
+        # 权威判定，覆盖路由/worker/kb_upload 全部登记路径；官方库豁免与配额读取由
+        # quota 服务内部完成（经 runtime manager 取 share_config）；惰性 import 防成环。
+        from yuxi.services.knowledge_quota_service import ensure_tenant_kb_quota
+
+        await ensure_tenant_kb_quota(kb_id, incoming_count=1, incoming_bytes=int(metadata.get("size") or 0))
+
         # Initial status
         metadata["status"] = FileStatus.UPLOADED
         metadata["created_at"] = utc_isoformat()

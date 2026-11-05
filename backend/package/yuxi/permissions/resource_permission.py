@@ -44,6 +44,7 @@ DEFAULT_SCOPE = {"access_level": "global", "department_ids": [], "user_uids": []
 KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
         "user": ResourcePermission.READ,
+        "tenant_admin": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }
@@ -51,6 +52,7 @@ KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
 AGENT_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
         "user": ResourcePermission.MANAGE,
+        "tenant_admin": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }
@@ -134,6 +136,17 @@ def normalize_permission_config(
     raise ValueError("资源共享配置必须使用 version 2")
 
 
+def is_official_share_config(share_config: dict | None) -> bool:
+    """判定共享配置是否官方（read_scope access_level == global）域。
+
+    知识中心双域划分（spec 2026-10-08）的 is_official 派生唯一出处，
+    kb_tools / knowledge_response / 配额豁免共用，防止口径漂移。
+    """
+    config = share_config if isinstance(share_config, dict) else {}
+    read_scope = config.get("read_scope") or {}
+    return isinstance(read_scope, dict) and read_scope.get("access_level") == "global"
+
+
 def scope_matches(user: Any, scope: dict | None) -> bool:
     """判断用户是否命中一个共享范围。"""
 
@@ -181,8 +194,10 @@ def resolve_resource_permission(
     config = normalize_permission_config(
         raw_share_config,
     )
+    ceiling = policy.role_ceiling.get(_value(user, "role"), ResourcePermission.READ)
     if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
-        return ResourcePermission.MANAGE
+        # 拥有者也受角色上限约束（spec 2026-10-08 §5.1：预建者受本人上限约束不会越界）
+        return _minimum_permission(ResourcePermission.MANAGE, ceiling)
     elif scope_matches(user, config["manage_scope"]) and (
         config["read_scope"] is None or scope_matches(user, config["read_scope"])
     ):
@@ -192,7 +207,6 @@ def resolve_resource_permission(
     else:
         granted = ResourcePermission.NONE
 
-    ceiling = policy.role_ceiling.get(_value(user, "role"), ResourcePermission.READ)
     return _minimum_permission(granted, ceiling)
 
 

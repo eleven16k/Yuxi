@@ -7,6 +7,7 @@ import {
   BarChart3,
   ClipboardList,
   LibraryBig,
+  BookOpen,
   Box,
   HardDrive,
   PanelLeft,
@@ -164,6 +165,14 @@ const mainList = computed(() => {
     path: '/workspace',
     icon: HardDrive,
     activeIcon: HardDrive
+  })
+
+  items.push({
+    name: '知识中心',
+    path: '/knowledge',
+    activePaths: ['/knowledge'],
+    icon: BookOpen,
+    activeIcon: BookOpen
   })
 
   items.push({
