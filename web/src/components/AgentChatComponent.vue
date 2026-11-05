@@ -149,7 +149,12 @@
                 <span v-if="replyElapsedLabel" class="generating-elapsed">{{
                   replyElapsedLabel
                 }}</span>
-                <span v-if="creditsDisplay" class="generating-elapsed">｜ 已消耗 {{ creditsDisplay }}</span>
+              </div>
+            </div>
+            <!-- 回合结束后原位保留本回合积分消耗（估算 → run view 精确值刷新），下一次 run 开始时清空 -->
+            <div v-else-if="creditsDisplay" class="generating-status">
+              <div class="generating-indicator">
+                <span class="generating-elapsed">本回合已消耗 {{ creditsDisplay }}</span>
               </div>
             </div>
           </div>

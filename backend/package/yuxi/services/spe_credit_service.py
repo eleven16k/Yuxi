@@ -2,6 +2,8 @@
 
 容错约定（spec §5）：SPE 故障一律放行不阻断聊天（登录零余额闸兜底，漏报=少收钱）；
 结算以 SPE deduct 响应为准，镜像估算仅展示。
+闸为提交时点检查：排队中请求在派发成 Run 时不复查（已在提交时闸过）；
+审批 resume 路径不设闸（对齐上游零影响）。
 """
 
 from __future__ import annotations
@@ -394,9 +396,12 @@ async def report_run_usage_best_effort(
 
 
 async def _load_failed_reports() -> list[CreditReportFailed]:
-    """读取全部上报失败行（超管重放入口；读取失败向上抛，让调用方看到真实故障）。"""
+    """读取待重放的失败行（超管重放入口；读取失败向上抛，让调用方看到真实故障）。
+
+    LIMIT 500 防失败表膨胀后单次重放拖垮出站链路；溢出部分下次重放继续（按 id 升序）。
+    """
     async with pg_manager.get_async_session_context() as db:
-        result = await db.execute(select(CreditReportFailed).order_by(CreditReportFailed.id))
+        result = await db.execute(select(CreditReportFailed).order_by(CreditReportFailed.id).limit(500))
         return list(result.scalars().all())
 
 
