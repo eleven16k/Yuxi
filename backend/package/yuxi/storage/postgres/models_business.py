@@ -1241,6 +1241,7 @@ class AgentRun(Base):
             "output_message_id": self.output_message_id,
             "input_payload": self.input_payload or {},
             "token_usage": self.token_usage or {},
+            "credits_li": self.credits_li,
             "langfuse_trace_id": self.langfuse_trace_id,
             "error_type": self.error_type,
             "error_message": self.error_message,

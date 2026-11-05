@@ -790,6 +790,7 @@ async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSessio
         "final_message_id": output_message.id if output_message else None,
         "langfuse_trace_id": getattr(run, "langfuse_trace_id", None) or output_metadata.get("langfuse_trace_id"),
         "token_usage": getattr(run, "token_usage", None) or {},
+        "credits_li": getattr(run, "credits_li", None),
         "timing": build_agent_run_timing(
             created_at=getattr(run, "created_at", None),
             started_at=getattr(run, "started_at", None),

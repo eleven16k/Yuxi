@@ -55,6 +55,8 @@ class DashboardRepository:
                 AgentRun.conversation_id,
                 func.sum(case((reported | complete, value), else_=None)).label("total_tokens"),
                 func.min(case((complete & value.isnot(None), 1), else_=0)).label("complete"),
+                # 算力积分回填聚合（agent-compute-credit）：未上报行按 0 计。
+                func.coalesce(func.sum(AgentRun.credits_li), 0).label("credits_li"),
             )
             .where(AgentRun.conversation_id.in_(conversation_ids) if conversation_ids is not None else True)
             .group_by(AgentRun.conversation_id)
@@ -67,6 +69,7 @@ class DashboardRepository:
                 Conversation.id.label("conversation_id"),
                 case((has_runs, run_totals.c.total_tokens), else_=legacy_tokens).label("total_tokens"),
                 case((has_runs, run_totals.c.complete == 1), else_=legacy_tokens.isnot(None)).label("complete"),
+                case((has_runs, run_totals.c.credits_li), else_=0).label("credits_li"),
             )
             .where(Conversation.id.in_(conversation_ids) if conversation_ids is not None else True)
             .outerjoin(run_totals, Conversation.id == run_totals.c.conversation_id)
@@ -164,6 +167,7 @@ class DashboardRepository:
                     "message_count": stats.message_count if stats else 0,
                     "total_tokens": usage.total_tokens,
                     "token_usage_complete": bool(usage.complete),
+                    "credits_li": int(usage.credits_li or 0),
                     "created_at": format_utc_datetime(conversation.created_at) or "",
                     "updated_at": format_utc_datetime(conversation.updated_at) or "",
                 }

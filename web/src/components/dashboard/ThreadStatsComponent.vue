@@ -336,6 +336,12 @@
               >
             </template>
 
+            <template v-if="column.key === 'credits_li'">
+              <span class="token-num" title="SPE 算力扣减（1 积分 = 10 厘）">{{
+                formatCreditUsage(record)
+              }}</span>
+            </template>
+
             <template v-if="column.key === 'updated_at'">
               <span class="time-text">{{ formatFullDateTime(record.updated_at) }}</span>
             </template>
@@ -371,6 +377,12 @@ import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'
 import DashboardMetricGrid from './DashboardMetricGrid.vue'
 import ThreadDetailDrawer from './ThreadDetailDrawer.vue'
+
+// SPE 算力积分展示（agent-compute-credit）：1 积分 = 10 厘；未上报显示 —。
+function formatCreditUsage(record) {
+  if (record.credits_li == null) return '—'
+  return `${(record.credits_li / 10).toFixed(2)} 积分`
+}
 
 function getCSSVariable(variableName, element = document.documentElement) {
   return getComputedStyle(element).getPropertyValue(variableName).trim()
@@ -426,6 +438,7 @@ const conversationColumns = [
   { title: '会话状态', key: 'status', width: '90px', align: 'center' },
   { title: '消息数', key: 'message_count', width: '90px', align: 'center' },
   { title: 'Token 消耗', key: 'total_tokens', width: '110px', align: 'right' },
+  { title: '消耗积分', key: 'credits_li', width: '100px', align: 'right' },
   { title: '更新时间', key: 'updated_at', width: '160px' },
   { title: '操作', key: 'actions', width: '90px', align: 'center' }
 ]
